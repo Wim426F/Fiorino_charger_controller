@@ -53,7 +53,7 @@ void loop()
 
   if (currentMillis - previousMillis > interval)
   {
-    //HWSERIAL.write("D"); // send the character 'D' every 10 seconds
+    HWSERIAL.write("D"); // send the character 'D' every 10 seconds
   }
 
   while (HWSERIAL.available() > 0)
@@ -97,6 +97,7 @@ void loop()
     }
   }
   //Serial.println("Vmin: " + string_Vmin + "     Vmax: " + string_Vmin);
+  Serial.println(string_temp);
   if (Vmin < Vmin_lim)
   {
     Vdif = 229 - (Vmin_lim - Vmin) * 200;
