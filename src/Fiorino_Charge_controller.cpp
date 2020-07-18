@@ -1,10 +1,8 @@
 #include <Arduino.h>
 #include <FlexCAN_T4.h>
 
-FlexCAN_T4<CAN1, RX_SIZE_256, TX_SIZE_16> can2;
-FlexCAN_T4<CAN2, RX_SIZE_256, TX_SIZE_16> can3;
-
-//hello freak biass!!!
+//FlexCAN_T4<CAN1, RX_SIZE_256, TX_SIZE_16> can2;
+//FlexCAN_T4<CAN2, RX_SIZE_256, TX_SIZE_16> can3;
 
 #define HWSERIAL Serial1
 
@@ -28,21 +26,27 @@ const float Vmin_lim = 3.000;
 const float Vmax_lim_low = 4.000; // 70% to 80% charged
 const float Vmax_lim_med = 4.100; // 80% to 90% charged
 const float Vmax_lim_max = 4.200; // 90% to 100% charged
-const int charger = A0;           // output for pwm signal
-const int charger_lim_switch = 2; // input for charge limit switch
-int chargerPwm = 0;
+
+const byte charger = A0;        // output for pwm signal
+const byte charger_on = A1;     // input for charger on
+const byte plug_lock_low = A3;  // output for mosfet low side
+const byte plug_lock_high = A5; // output for fet high side
+const byte plug_unlock_low = A7;
+const byte plug_unlock_high = A9;
+const byte limit_switch = 2; // input for 80% charge limit switch
+byte chargerPwm = 0;
 
 void setup()
 {
   Serial.begin(9600);     // serial port to computer
   HWSERIAL.begin(115200); // serial port to the BMS
   pinMode(charger, OUTPUT);
-  pinMode(charger_lim_switch, INPUT_PULLUP);
+  pinMode(limit_switch, INPUT_PULLUP);
   delay(1000);
-  can2.begin();
-  can2.setBaudRate(250000);
-  can3.begin();
-  can3.setBaudRate(250000);
+  //can2.begin();
+  //can2.setBaudRate(250000);
+  //can3.begin();
+  //can3.setBaudRate(250000);
 }
 
 void loop()
@@ -51,7 +55,7 @@ void loop()
   float temp_dif = 0; // temperature difference between limtis for throttling charger
   unsigned long currentMillis = millis();
 
-  if (currentMillis - previousMillis > interval)
+  if (currentMillis - previousMillis >= interval)
   {
     HWSERIAL.write("D"); // send the character 'D' every 10 seconds
   }
@@ -112,17 +116,17 @@ void loop()
     Vdif = 229;
   }
 
-  if (Vmax >= Vmax_lim_low && Vmax <= Vmax_lim_med && digitalRead(charger_lim_switch) == HIGH) // if limit switch is set to first limit start throttling down from low to med
+  if (Vmax >= Vmax_lim_low && Vmax <= Vmax_lim_med && digitalRead(limit_switch) == HIGH) // if limit switch is set to first limit start throttling down from low to med
   {
     Vdif = (Vmax_lim_med - Vmax) * 2040 + 25; // PWM range is from 10% to 90% so from 255 points the range is 204, starting from 26(10%)
   }
 
-  if (Vmax > Vmax_lim_low && Vmax < Vmax_lim_max && digitalRead(charger_lim_switch) == LOW) // if max cell voltage is between second limit, keep throttling down if limit switch allows
+  if (Vmax > Vmax_lim_low && Vmax < Vmax_lim_max && digitalRead(limit_switch) == LOW) // if max cell voltage is between second limit, keep throttling down if limit switch allows
   {
     Vdif = (Vmax_lim_max - Vmax) * 1020 + 25;
   }
 
-  if ((Vmax > Vmax_lim_max && digitalRead(charger_lim_switch) == LOW) || (Vmax > Vmax_lim_med && digitalRead(charger_lim_switch) == HIGH))
+  if ((Vmax > Vmax_lim_max && digitalRead(limit_switch) == LOW) || (Vmax > Vmax_lim_med && digitalRead(limit_switch) == HIGH))
   {
     Vdif = 0;
   }
