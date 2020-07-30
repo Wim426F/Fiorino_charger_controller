@@ -1,193 +1,338 @@
 #include <Arduino.h>
-#include <FlexCAN_T4.h>
+#include <ArduinoOTA.h>
+#include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
+#include <ESP8266mDNS.h>
+#include <WiFiClient.h>
+#include <WiFiUdp.h>
+#include <LittleFS.h>
 
-//FlexCAN_T4<CAN1, RX_SIZE_256, TX_SIZE_16> can2;
-//FlexCAN_T4<CAN2, RX_SIZE_256, TX_SIZE_16> can3;
+void ChargerControl();
+void EvseActuator();
+void WifiAutoConnect();
+void ServeWebPage();
 
-#define HWSERIAL Serial
+long previous_millis = 0;
+unsigned long delay_one = 10000;
+unsigned long delay_two = 100;
 
-void charger_control();
-void evse_actuator();
+/* Data */
+String data_string;
+String temperature_string;
+String Vmin_string;
+String Vmax_string;
+String Vtot_string;
+String energy_dissipated_string;
 
-long previousMillis = 0;
-unsigned long interval = 10000;
+int temperature_index = 0;
+int Vmin_index = 0;
+int Vmax_index = 0;
+int Vtot_index = 0;
+int energy_dissipated_index = 0;
 
-String string_voltage;
-String volt;
-String volt1;
-String string_Vmin;
-String string_Vmax;
-String string_temp;
+float Vmin = 0;
+float Vmax = 0;
+float Vtot = 0;
+float temperature = 0;
+float charger_pwm_duty = 0;
+float charger_speed = 0;
 
-float Vmin = 0; // minimum cell voltage
-float Vmax = 0; // maximum cell voltage
-float temp = 0; // temperature of pack
-float Vdif = 0;
-float temp_dif = 0;
-const float temp_min = 0.0;       // minimum preferred temp before throttling down
-const float temp_max = 40.0;      // max preferred temp before throttling down
-const float temp_dif_max = 10.0;  // max deviation from temperature limits before charger cut off
-const float Vmin_lim = 3.000;     // minimum cell voltage
-const float Vmax_lim_low = 4.000; // 70% to 80% charged
-const float Vmax_lim_med = 4.100; // 80% to 90% charged
-const float Vmax_lim_max = 4.200; // 90% to 100% charged
+/* Limits */
+const float temperature_min = 0.0;
+const float temperature_max = 40.0;
+const float temperature_dif_max = 10.0;
+const float Vmin_lim = 3.000;
+const float Vmax_lim_low = 4.000;
+const float Vmax_lim_med = 4.100;
+const float Vmax_lim_max = 4.200;
+const float Vtot_lim = 300.000;
+const float energy_dissipated_max = 2000.00;
 
-const byte charger = A0;      // output for pwm signal
-const byte charger_limit = 5; // input for 80% charge limit switch
-byte charger_pwm = 0;         // pwm variable
+/* Triggers */
+boolean plug_is_locked = false;
+boolean evse_is_on = false;
+boolean voltage_is_limited = false;
 
-boolean plug_locked = false;
-const byte plugged_in = 3;     // input for car plugged in
-const byte evse_lock_N = A2;   // output for locking, N-channel fet low side
-const byte evse_lock_P = A4;   // output for locking fet, P-channel fet high side
-const byte evse_unlock_N = A6; // output for unlocking, N-channel fet low side
-const byte evse_unlock_P = A8; // output for unlocking, P-channel fet high side
+/* Inputs */
+const byte evse_pin = D5;
+const byte charger_lim_pin = D6;
+
+/* Outputs */
+const byte charger_pwm_pin = D0;
+const byte lock_plug_N = D1; // fet low side
+const byte lock_plug_P = D2; // fet high side
+const byte unlock_plug_N = D3;
+const byte unlock_plug_P = D4;
+
+/* Wifi */
+const char *sta_ssid_one = "BooneZaak";
+const char *sta_password_one = "B00n3meubelstof@";
+const char *sta_ssid_two = "Boone-Huis";
+const char *sta_password_two = "b00n3meubelstof@";
+const char *ap_ssid = "Fiorino";
+const char *ap_password = "3VLS042020";
+const char *ota_hostname = "FIORINO_ESP6266";
+const char *ota_password = "MaPe1!";
+byte wifi_available = 0;
+
+int ssid_hidden = 0;
+int max_connection = 2;
+IPAddress local_ip(192, 168, 1, 173);
+IPAddress ap_ip(192, 168, 4, 22);
+IPAddress gateway(192, 168, 4, 9);
+IPAddress subnet(255, 255, 255, 0);
+ESP8266WebServer server;
+MDNSResponder mdns;
+FS* filesystem = &LittleFS;
 
 void setup()
 {
-  Serial.begin(9600);     // serial port to computer
-  HWSERIAL.begin(115200); // serial port to the BMS
-  delay(1000);
+  // Soft Acces Point and Station
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.begin(sta_ssid_two, sta_password_two);
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    delay(100);
+  }
+  //WifiAutoConnect();
+  WiFi.softAPConfig(ap_ip, gateway, subnet);
+  WiFi.softAP(ap_ssid, ap_password, ssid_hidden, max_connection);
 
-  pinMode(charger, OUTPUT);
-  pinMode(plugged_in, INPUT_PULLUP);
-  pinMode(charger_limit, INPUT_PULLUP);
+  // Over The Air update
+  ArduinoOTA.setHostname(ota_hostname);
+  ArduinoOTA.setPassword(ota_password);
+  ArduinoOTA.onStart([]() {
+    Serial.println("Start update");
+  });
 
-  pinMode(evse_lock_N, OUTPUT);
-  pinMode(evse_lock_P, OUTPUT);
-  pinMode(evse_unlock_N, OUTPUT);
-  pinMode(evse_unlock_P, OUTPUT);
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+  });
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\nEnd");
+  });
+  ArduinoOTA.begin();
+  Serial.println("Ready");
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
 
-  //can2.begin();
-  //can2.setBaudRate(250000);
-  //can3.begin();
-  //can3.setBaudRate(250000);
+  // Set up webserver
+  mdns.begin("my-fiorino", WiFi.localIP());
+  LittleFS.begin();
+  server.on("/", ServeWebPage);
+  server.begin();
+  MDNS.addService("http", "tcp", 80);
+
+  Serial.begin(115200);
+  while (!Serial)
+  {
+    delay(50);
+  }
+
+  pinMode(evse_pin, INPUT_PULLUP);
+  pinMode(charger_lim_pin, INPUT_PULLUP);
+
+  pinMode(charger_pwm_pin, OUTPUT);
+  pinMode(lock_plug_N, OUTPUT);
+  pinMode(lock_plug_P, OUTPUT);
+  pinMode(unlock_plug_N, OUTPUT);
+  pinMode(unlock_plug_P, OUTPUT);
+
+  data_string.reserve(3700);
 }
 
 void loop()
 {
-  Vdif = 0;     // voltage difference between limits for throttling charger
-  temp_dif = 0; // temperature difference between limtis for throttling charger
-  unsigned long currentMillis = millis();
+  ArduinoOTA.handle();
+  server.handleClient();
+  MDNS.update();
 
-  if (currentMillis - previousMillis >= interval)
+  if (WiFi.status() != WL_CONNECTED)
   {
-    HWSERIAL.write("D"); // send the character 'D' every 10 seconds
-  }
-
-  while (HWSERIAL.available() > 0 && plugged_in == LOW)
-  {
-    string_temp = HWSERIAL.readString();
-    string_voltage = HWSERIAL.readString();
-    //Serial.println(string_voltage);
-    if (string_temp.indexOf("00-00-d2-7f 049") > -1)
+    wifi_available = WiFi.scanNetworks(sta_ssid_one, sta_ssid_two);
+    if (wifi_available > 0)
     {
-      string_temp.remove(0, 30);
-      if (string_temp.startsWith('-')) // check if temperature is below 0°C
-      {
-        temp = string_temp.toFloat();
-      }
-      else
-      {
-        string_temp.remove(0, 1);
-        temp = string_temp.toFloat();
-      }
-    }
-
-    if (string_voltage.indexOf("Vmin") > -1 && string_voltage.startsWith("7")) // find the string Vmin in the buffer
-    {
-      string_voltage.remove(0, 13);
-      volt = string_voltage.substring(0, 55); // extract char 13 to 51 from string
-      volt1 = string_voltage.substring(0, 55);
-      if (volt1.indexOf("Vmax") > -1 && Vmax > 0)
-      {
-        volt1.remove(0, 33);
-        string_Vmax = volt1.substring(0, 5);
-      }
-      else
-      {
-        volt1.remove(0, 16);
-        string_Vmin = volt1.substring(0, 5);
-      }
-      string_Vmin = volt.substring(0, 5); // extract char 0 to 5 from substring for minimum cell voltage
-      Vmin = string_Vmin.toFloat();       // convert string to float
-      Vmax = string_Vmax.toFloat();
-      previousMillis = currentMillis;
+      WifiAutoConnect();
     }
   }
-  Serial.println("Vmin: " + string_Vmin + "     Vmax: " + string_Vmin);
-  //Serial.println(string_temp);
-  charger_control();
-  evse_actuator();
+
+  EvseActuator();
+
+  evse_is_on = digitalRead(evse_pin);
+  evse_is_on = !evse_is_on;
+
+  voltage_is_limited = digitalRead(charger_lim_pin);
+  voltage_is_limited = !voltage_is_limited;
+
+  unsigned long current_millis = millis();
+
+  if (current_millis - previous_millis >= delay_one && evse_is_on == true)
+  {
+    Serial.write('T'); // retrieve data
+  }
+
+  if (current_millis - previous_millis >= delay_two)
+  {
+    Serial.println(WiFi.localIP());
+    Serial.println(WiFi.dnsIP());
+    Serial.println(WiFi.gatewayIP());
+    Serial.println(WiFi.subnetMask());
+    //Serial.println((String) "Vmin: " + Vmin + "   Vmax: " + Vmax + "   Vtot: " + Vtot + "   Temp: " + temperature + "   PWM: " + charger_pwm_duty);
+    previous_millis = current_millis;
+  }
+
+  //while (Serial.available() > 0 && plug_in == true)
+  while (Serial.available() > 0)
+  {
+    data_string = Serial.readString();
+    data_string.replace(" ", "");
+    data_string.replace("N.C.", "");
+    data_string.replace("*", "");
+    temperature_index = data_string.indexOf("d2-7f") + 26; // find the location of certain strings
+    data_string.remove(0, temperature_index);              // remove everything until temp to free up memory
+    Vmin_index = data_string.indexOf("Vmin:") + 5;
+    Vmax_index = data_string.indexOf("Vmax:") + 5;
+    Vtot_index = data_string.indexOf("Vtot:") + 5;
+
+    temperature_string = data_string.substring(0, 6);
+    Vmin_string = data_string.substring(Vmin_index, Vmin_index + 5);
+    Vmax_string = data_string.substring(Vmax_index, Vmax_index + 5);
+    Vtot_string = data_string.substring(Vtot_index, Vtot_index + 5);
+
+    if (temperature_string.startsWith(String('-')))
+    {
+      temperature = temperature_string.toFloat();
+    }
+    else
+    {
+      temperature_string.remove(0, 1);
+      temperature_string.replace(String('S'), "");
+      temperature = temperature_string.toFloat();
+    }
+
+    Vmin = Vmin_string.toFloat(); // convert string to float
+    Vmax = Vmax_string.toFloat();
+    Vtot = Vtot_string.toFloat();
+    previous_millis = current_millis;
+    ChargerControl();
+  }
+
+  analogWrite(charger_pwm_pin, charger_pwm_duty);
 }
 
-void charger_control()
+void ChargerControl()
 {
   if (Vmin < Vmin_lim)
   {
-    Vdif = 229 - (Vmin_lim - Vmin) * 200;
-    if (Vdif < 26)
+    charger_pwm_duty = 229 - (Vmin_lim - Vmin) * 200;
+    if (charger_pwm_duty < 26)
     {
-      Vdif = 26;
+      charger_pwm_duty = 26;
     }
   }
 
-  if (Vmin > Vmin_lim && Vmax < Vmax_lim_low) // if cell voltage is in between high and low limits, charger max current
+  if (Vmin >= Vmin_lim && Vmax <= Vmax_lim_low)
   {
-    Vdif = 229;
+    charger_pwm_duty = 229;
   }
 
-  if (Vmax >= Vmax_lim_low && Vmax <= Vmax_lim_med && digitalRead(charger_limit) == HIGH) // if limit switch is set to first limit start throttling down from low to med
+  if (Vmin >= Vmin_lim && Vmax > Vmax_lim_low && Vmax <= Vmax_lim_med && voltage_is_limited == true)
   {
-    Vdif = (Vmax_lim_med - Vmax) * 2040 + 25; // PWM range is from 10% to 90% so from 255 points the range is 204, starting from 26(10%)
+    charger_pwm_duty = (Vmax_lim_med - Vmax) * 2040 + 25; // PWM is from 26 > 229 (10% > 90%)
   }
 
-  if (Vmax > Vmax_lim_low && Vmax < Vmax_lim_max && digitalRead(charger_limit) == LOW) // if max cell voltage is between second limit, keep throttling down if limit switch allows
+  if (Vmin >= Vmin_lim && Vmax >= Vmax_lim_low && Vmax <= Vmax_lim_max && voltage_is_limited == false)
   {
-    Vdif = (Vmax_lim_max - Vmax) * 1020 + 25;
+    charger_pwm_duty = (Vmax_lim_max - Vmax) * 1020 + 25;
   }
 
-  if ((Vmax > Vmax_lim_max && digitalRead(charger_limit) == LOW) || (Vmax > Vmax_lim_med && digitalRead(charger_limit) == HIGH))
+  if ((Vmax > Vmax_lim_max || Vtot > Vtot_lim) || (Vmax > Vmax_lim_med && voltage_is_limited == true))
   {
-    Vdif = 0;
+    charger_pwm_duty = 0;
   }
 
-  if (temp <= temp_min && temp_min - temp < temp_dif_max) // check if temperature is outside of preferred range but still within max deviation
+  if (temperature <= temperature_min)
   {
-    temp_dif = temp_min - temp;
-    Vdif = Vdif - (temp_dif * 10); // subtract the temp difference times 10 from the Vdif for throttling down
+    if (temperature_min - temperature > temperature_dif_max)
+    {
+      charger_pwm_duty = 0;
+    }
+    else
+    {
+      charger_pwm_duty -= (temperature_min - temperature) * 10; // subtract the temp difference times 10
+    }
   }
 
-  if (temp >= temp_max && temp - temp_max < temp_dif_max) // check if temperature is outside of preferred range but still within max deviation
+  if (temperature >= temperature_max) // check if temperature is outside of preferred range but still within max deviation
   {
-    temp_dif = temp - temp_max;
-    Vdif = Vdif - (temp_dif * 10);
+    if (temperature - temperature_max > temperature_dif_max)
+    {
+      charger_pwm_duty = 0;
+    }
+    else
+    {
+      charger_pwm_duty -= (temperature - temperature_max) * 10;
+    }
   }
 
-  charger_pwm = Vdif;
-  analogWrite(charger, charger_pwm);
+  if ((charger_pwm_duty > 0 && charger_pwm_duty < 26) || charger_pwm_duty < 0)
+  {
+    charger_pwm_duty = 0;
+  }
+
+  charger_speed = (map(charger_pwm_duty, 26, 229, 0, 27)) * Vtot / 1000;
+
+  return;
 }
 
-void evse_actuator()
+void EvseActuator()
 {
-  if (digitalRead(plugged_in) == LOW && plug_locked == false) // if the evse is plugged in and not latched
+  if (evse_is_on == true && plug_is_locked == false) // if the evse is plugged in and not latched
   {
-    analogWrite(evse_unlock_P, 255); // switch P fet unlock off
-    analogWrite(evse_unlock_N, 0);   // switch N fet unlock off
-    delayNanoseconds(150);           // wait for fet delay & fall time
-    analogWrite(evse_lock_P, 0);     // switch P fet lock on
-    analogWrite(evse_lock_N, 255);   // switch N fet lock on
-    delayNanoseconds(150);
-    plug_locked = true;
+    analogWrite(unlock_plug_P, 255); // switch P fet unlock off
+    analogWrite(unlock_plug_N, 0);   // switch N fet unlock off
+    delayMicroseconds(1);            // wait for fet delay & fall time
+    analogWrite(lock_plug_P, 0);     // switch P fet lock on
+    analogWrite(lock_plug_N, 255);   // switch N fet lock on
+    delayMicroseconds(1);
+    plug_is_locked = true;
   }
 
-  if (digitalRead(plugged_in) == HIGH && plug_locked == true) // if the evse is stopped
+  if (evse_is_on == false && plug_is_locked == true) // if the evse is stopped
   {
-    analogWrite(evse_lock_P, 255);   // turn P fet lock off
-    analogWrite(evse_lock_N, 0);     // turn N fet lock off
-    delayNanoseconds(150);           // wait for fet delay & fall time
-    analogWrite(evse_unlock_P, 0);   // turn P fet unlock on
-    analogWrite(evse_unlock_N, 255); // turn N fet unlock on
-    plug_locked = false;
+    analogWrite(lock_plug_P, 255);   // turn P fet lock off
+    analogWrite(lock_plug_N, 0);     // turn N fet lock off
+    delayMicroseconds(1);            // wait for fet delay & fall time
+    analogWrite(unlock_plug_P, 0);   // turn P fet unlock on
+    analogWrite(unlock_plug_N, 255); // turn N fet unlock on
+    plug_is_locked = false;
   }
+}
+
+void WifiAutoConnect()
+{
+  WiFi.begin(sta_ssid_one, sta_password_one);
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    delay(50);
+  }
+  if (WiFi.status() == WL_NO_SSID_AVAIL || WiFi.status() == WL_CONNECT_FAILED)
+  {
+    WiFi.begin(sta_ssid_two, sta_password_two);
+  }
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    delay(50);
+  }
+  if (WiFi.status() == WL_NO_SSID_AVAIL || WiFi.status() == WL_CONNECT_FAILED)
+  {
+    wifi_available = 0;
+  }
+}
+
+void ServeWebPage()
+{
+  File file = LittleFS.open("/webpage.html", "r"); // read webpage from filesystem
+  server.streamFile(file, "text/html");
+  file.close();
 }
