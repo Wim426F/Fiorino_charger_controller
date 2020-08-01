@@ -3,14 +3,17 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
+#include <WebSocketsServer.h>
 #include <WiFiClient.h>
-#include <WiFiUdp.h>
 #include <LittleFS.h>
 
 void ChargerControl();
 void EvseActuator();
 void WifiAutoConnect();
-void ServeWebPage();
+void handleRoot();
+void handleJS();
+void handleFileList();
+void handleFile();
 
 long previous_millis = 0;
 unsigned long delay_one = 10000;
@@ -23,6 +26,7 @@ String Vmin_string;
 String Vmax_string;
 String Vtot_string;
 String energy_dissipated_string;
+char bms_command;
 
 int temperature_index = 0;
 int Vmin_index = 0;
@@ -36,6 +40,7 @@ float Vtot = 0;
 float temperature = 0;
 float charger_pwm_duty = 0;
 float charger_speed = 0;
+float energy_dissipated = 0;
 
 /* Limits */
 const float temperature_min = 0.0;
@@ -52,6 +57,7 @@ const float energy_dissipated_max = 2000.00;
 boolean plug_is_locked = false;
 boolean evse_is_on = false;
 boolean voltage_is_limited = false;
+boolean change_bms_info = false;
 
 /* Inputs */
 const byte evse_pin = D5;
@@ -65,13 +71,13 @@ const byte unlock_plug_N = D3;
 const byte unlock_plug_P = D4;
 
 /* Wifi */
-const char *sta_ssid_one = "BooneZaak";
-const char *sta_password_one = "B00n3meubelstof@";
-const char *sta_ssid_two = "Boone-Huis";
-const char *sta_password_two = "b00n3meubelstof@";
+const char *sta_ssid_one = "Boone-Huis";
+const char *sta_password_one = "b00n3meubelstof@";
+const char *sta_ssid_two = "BooneZaak";
+const char *sta_password_two = "B00n3meubelstof@";
 const char *ap_ssid = "Fiorino";
 const char *ap_password = "3VLS042020";
-const char *ota_hostname = "FIORINO_ESP6266";
+const char *ota_hostname = "FIORINO_ESP8266";
 const char *ota_password = "MaPe1!";
 byte wifi_available = 0;
 
@@ -81,15 +87,17 @@ IPAddress local_ip(192, 168, 1, 173);
 IPAddress ap_ip(192, 168, 4, 22);
 IPAddress gateway(192, 168, 4, 9);
 IPAddress subnet(255, 255, 255, 0);
-ESP8266WebServer server;
+ESP8266WebServer server(80);
 MDNSResponder mdns;
-FS* filesystem = &LittleFS;
+WebSocketsServer webSocket = WebSocketsServer(81);
 
 void setup()
 {
+  LittleFS.begin();
+
   // Soft Acces Point and Station
   WiFi.mode(WIFI_AP_STA);
-  WiFi.begin(sta_ssid_two, sta_password_two);
+  WiFi.begin(sta_ssid_one, sta_password_one);
   while (WiFi.status() != WL_CONNECTED)
   {
     delay(100);
@@ -101,27 +109,22 @@ void setup()
   // Over The Air update
   ArduinoOTA.setHostname(ota_hostname);
   ArduinoOTA.setPassword(ota_password);
-  ArduinoOTA.onStart([]() {
-    Serial.println("Start update");
-  });
-
-  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
-  });
   ArduinoOTA.onEnd([]() {
-    Serial.println("\nEnd");
+    ESP.restart();
   });
   ArduinoOTA.begin();
-  Serial.println("Ready");
-  Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
 
   // Set up webserver
-  mdns.begin("my-fiorino", WiFi.localIP());
-  LittleFS.begin();
-  server.on("/", ServeWebPage);
+  mdns.addService("http", "tcp", 80);
+  mdns.begin("fiorino");
+
+  server.on("/", handleRoot);
+  server.on("/pureknob.js", handleJS);
+  server.on("/list", handleFileList);
   server.begin();
-  MDNS.addService("http", "tcp", 80);
+  //webSocket.begin();
+  //webSocket.onEvent(webSocketEvent);
 
   Serial.begin(115200);
   while (!Serial)
@@ -145,7 +148,8 @@ void loop()
 {
   ArduinoOTA.handle();
   server.handleClient();
-  MDNS.update();
+  mdns.update();
+  webSocket.loop();
 
   if (WiFi.status() != WL_CONNECTED)
   {
@@ -168,15 +172,19 @@ void loop()
 
   if (current_millis - previous_millis >= delay_one && evse_is_on == true)
   {
-    Serial.write('T'); // retrieve data
+    if (change_bms_info == false)
+    {
+      bms_command = 'T';
+    }
+    else
+    {
+      bms_command = 'D';
+    }
+    Serial.write(bms_command);
   }
 
   if (current_millis - previous_millis >= delay_two)
   {
-    Serial.println(WiFi.localIP());
-    Serial.println(WiFi.dnsIP());
-    Serial.println(WiFi.gatewayIP());
-    Serial.println(WiFi.subnetMask());
     //Serial.println((String) "Vmin: " + Vmin + "   Vmax: " + Vmax + "   Vtot: " + Vtot + "   Temp: " + temperature + "   PWM: " + charger_pwm_duty);
     previous_millis = current_millis;
   }
@@ -186,34 +194,52 @@ void loop()
   {
     data_string = Serial.readString();
     data_string.replace(" ", "");
-    data_string.replace("N.C.", "");
     data_string.replace("*", "");
-    temperature_index = data_string.indexOf("d2-7f") + 26; // find the location of certain strings
-    data_string.remove(0, temperature_index);              // remove everything until temp to free up memory
-    Vmin_index = data_string.indexOf("Vmin:") + 5;
-    Vmax_index = data_string.indexOf("Vmax:") + 5;
-    Vtot_index = data_string.indexOf("Vtot:") + 5;
 
-    temperature_string = data_string.substring(0, 6);
-    Vmin_string = data_string.substring(Vmin_index, Vmin_index + 5);
-    Vmax_string = data_string.substring(Vmax_index, Vmax_index + 5);
-    Vtot_string = data_string.substring(Vtot_index, Vtot_index + 5);
-
-    if (temperature_string.startsWith(String('-')))
+    if (change_bms_info == false)
     {
-      temperature = temperature_string.toFloat();
+      data_string.replace("N.C.", "");
+      temperature_index = data_string.indexOf("d2-7f") + 26; // find the location of certain strings
+      data_string.remove(0, temperature_index);              // remove everything until temp to free up memory
+      Vmin_index = data_string.indexOf("Vmin:") + 5;
+      Vmax_index = data_string.indexOf("Vmax:") + 5;
+      Vtot_index = data_string.indexOf("Vtot:") + 5;
+
+      temperature_string = data_string.substring(0, 6);
+      Vmin_string = data_string.substring(Vmin_index, Vmin_index + 5);
+      Vmax_string = data_string.substring(Vmax_index, Vmax_index + 5);
+      Vtot_string = data_string.substring(Vtot_index, Vtot_index + 5);
+
+      if (temperature_string.startsWith(String('-')))
+      {
+        temperature = temperature_string.toFloat();
+      }
+      else
+      {
+        temperature_string.remove(0, 1);
+        temperature_string.replace(String('S'), "");
+        temperature = temperature_string.toFloat();
+      }
+
+      Vmin = Vmin_string.toFloat(); // convert string to float
+      Vmax = Vmax_string.toFloat();
+      Vtot = Vtot_string.toFloat();
+      previous_millis = current_millis;
+      change_bms_info = !change_bms_info;
     }
     else
     {
-      temperature_string.remove(0, 1);
-      temperature_string.replace(String('S'), "");
-      temperature = temperature_string.toFloat();
+      int check_type = 0;
+      energy_dissipated_index = data_string.indexOf("dissipata") + 10;
+      data_string.remove(0, energy_dissipated_index);
+      for (check_type = 0; isDigit(data_string.charAt(check_type) == true); check_type++)
+      {
+      }
+      energy_dissipated_string = data_string.substring(0, check_type);
+      energy_dissipated = energy_dissipated_string.toFloat();
+      change_bms_info = !change_bms_info;
     }
 
-    Vmin = Vmin_string.toFloat(); // convert string to float
-    Vmax = Vmax_string.toFloat();
-    Vtot = Vtot_string.toFloat();
-    previous_millis = current_millis;
     ChargerControl();
   }
 
@@ -280,6 +306,11 @@ void ChargerControl()
     charger_pwm_duty = 0;
   }
 
+  if (energy_dissipated > energy_dissipated_max)
+  {
+    charger_pwm_duty = 0;
+  }
+
   charger_speed = (map(charger_pwm_duty, 26, 229, 0, 27)) * Vtot / 1000;
 
   return;
@@ -330,9 +361,35 @@ void WifiAutoConnect()
   }
 }
 
-void ServeWebPage()
+void handleRoot()
 {
-  File file = LittleFS.open("/webpage.html", "r"); // read webpage from filesystem
-  server.streamFile(file, "text/html");
+  File file = LittleFS.open("/index.xhtml", "r"); // read webpage from filesystem
+  server.streamFile(file, "application/xhtml");
   file.close();
+}
+
+void handleJS()
+{
+  File file = LittleFS.open("pureknob.js", "r");
+  server.streamFile(file, "text/javascript");
+  file.close();
+}
+
+void handleFileList()
+{
+  String path = "/";
+  // Assuming there are no subdirectories
+  Dir dir = LittleFS.openDir(path);
+  String output = "[";
+  while (dir.next())
+  {
+    File entry = dir.openFile("r");
+    // Separate by comma if there are multiple files
+    if (output != "[")
+      output += ",";
+    output += String(entry.name()).substring(1);
+    entry.close();
+  }
+  output += "]";
+  server.send(200, "text/plain", output);
 }

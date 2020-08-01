@@ -1,26 +1,68 @@
 <!-- HTML weppage with JavaScript -->
-
+<!DOCTYPE html>
 <html>
+
 <head>
-</head>
-<body>
-<p> LED Status: <span id="led-state">__</span> </p>
-<button onclick="myFunction()"> TOGGLE </button>
-</body>
-<script>
-function myFunction()
-{
-  console.log("button was clicked!");
-  var xhr = new XMLHttpRequest();
-  var url = "/ledstate";
-  xhr.onreadystatechange = function() {
-    if (this.readyState == 4 && this.status == 200) {
-      document.getElementById("led-state").innerHTML = this.responseText;
+  <script src="pureknob.js"></script>
+  <title>
+    pure-knob: Test
+  </title>
+  <script type="text/javascript">
+    // <![CDATA[
+
+    /*
+     * Demo code for knob element.
+     */
+    function demoKnob() {
+      // Create knob element, 300 x 300 px in size.
+      const knob = pureknob.createKnob(300, 300);
+
+      // Set properties.
+      knob.setProperty('angleStart', -0.75 * Math.PI);
+      knob.setProperty('angleEnd', 0.75 * Math.PI);
+      knob.setProperty('colorFG', '#88ff88');
+      knob.setProperty('trackWidth', 0.4);
+      knob.setProperty('valMin', 0);
+      knob.setProperty('valMax', 100);
+
+      // Set initial value.
+      knob.setValue(50);
+
+      /*
+       * Event listener.
+       *
+       * Parameter 'knob' is the knob object which was
+       * actuated. Allows you to associate data with
+       * it to discern which of your knobs was actuated.
+       *
+       * Parameter 'value' is the value which was set
+       * by the user.
+       */
+      const listener = function (knob, value) {
+        console.log(value);
+      };
+
+      knob.addListener(listener);
+
+      // Create element node.
+      const node = knob.node();
+
+      // Add it to the DOM.
+      const elem = document.getElementById('some_element');
     }
-  };
-  xhr.open("GET", url, true);
-  xhr.send();
-};
-document.addEventListener('DOMContentLoaded', myFunction, false);
-</script>
+
+    function ready() {
+      demoKnob();
+    }
+
+    document.addEventListener('DOMContentLoaded', ready, false);
+
+  </script>
+</head>
+
+<body>
+  
+</body>
+
+
 </html>
