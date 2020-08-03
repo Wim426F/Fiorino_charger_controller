@@ -7,15 +7,16 @@
 #include <WiFiClient.h>
 #include <LittleFS.h>
 
+void GetSerialData();
 void ChargerControl();
-void EvseActuator();
+void EvseLocked();
 void WifiAutoConnect();
 void handleRoot();
 void handleJS();
 void handleFileList();
-void handleFile();
 
 long previous_millis = 0;
+unsigned long current_millis = 0;
 unsigned long delay_one = 10000;
 unsigned long delay_two = 100;
 
@@ -26,7 +27,6 @@ String Vmin_string;
 String Vmax_string;
 String Vtot_string;
 String energy_dissipated_string;
-char bms_command;
 
 int temperature_index = 0;
 int Vmin_index = 0;
@@ -57,7 +57,8 @@ const float energy_dissipated_max = 2000.00;
 boolean plug_is_locked = false;
 boolean evse_is_on = false;
 boolean voltage_is_limited = false;
-boolean change_bms_info = false;
+boolean bms_get_cellstat = true;
+boolean wifi_available = false;
 
 /* Inputs */
 const byte evse_pin = D5;
@@ -67,8 +68,8 @@ const byte charger_lim_pin = D6;
 const byte charger_pwm_pin = D0;
 const byte lock_plug_N = D1; // fet low side
 const byte lock_plug_P = D2; // fet high side
-const byte unlock_plug_N = D3;
-const byte unlock_plug_P = D4;
+const byte unlock_plug_N = D4;
+const byte unlock_plug_P = D3;
 
 /* Wifi */
 const char *sta_ssid_one = "Boone-Huis";
@@ -79,10 +80,9 @@ const char *ap_ssid = "Fiorino";
 const char *ap_password = "3VLS042020";
 const char *ota_hostname = "FIORINO_ESP8266";
 const char *ota_password = "MaPe1!";
-byte wifi_available = 0;
-
 int ssid_hidden = 0;
 int max_connection = 2;
+int available_networks = 0;
 IPAddress local_ip(192, 168, 1, 173);
 IPAddress ap_ip(192, 168, 4, 22);
 IPAddress gateway(192, 168, 4, 9);
@@ -102,7 +102,7 @@ void setup()
   {
     delay(100);
   }
-  //WifiAutoConnect();
+  wifi_available = true;
   WiFi.softAPConfig(ap_ip, gateway, subnet);
   WiFi.softAP(ap_ssid, ap_password, ssid_hidden, max_connection);
 
@@ -113,13 +113,13 @@ void setup()
     ESP.restart();
   });
   ArduinoOTA.begin();
-  Serial.println(WiFi.localIP());
 
   // Set up webserver
   mdns.addService("http", "tcp", 80);
   mdns.begin("fiorino");
 
   server.on("/", handleRoot);
+  //server.addHandler(RequestHandler );
   server.on("/pureknob.js", handleJS);
   server.on("/list", handleFileList);
   server.begin();
@@ -150,100 +150,108 @@ void loop()
   server.handleClient();
   mdns.update();
   webSocket.loop();
-
-  if (WiFi.status() != WL_CONNECTED)
-  {
-    wifi_available = WiFi.scanNetworks(sta_ssid_one, sta_ssid_two);
-    if (wifi_available > 0)
-    {
-      WifiAutoConnect();
-    }
-  }
-
-  EvseActuator();
-
+  
+  current_millis = millis();
   evse_is_on = digitalRead(evse_pin);
   evse_is_on = !evse_is_on;
-
   voltage_is_limited = digitalRead(charger_lim_pin);
   voltage_is_limited = !voltage_is_limited;
 
-  unsigned long current_millis = millis();
+  if (wifi_available == false)
+  {
+    available_networks = WiFi.scanNetworks(sta_ssid_one, sta_ssid_two); 
+  }
+
+  if (WiFi.status() != WL_CONNECTED && available_networks > 0)
+  {
+    WifiAutoConnect();
+  }
 
   if (current_millis - previous_millis >= delay_one && evse_is_on == true)
   {
-    if (change_bms_info == false)
+    if (bms_get_cellstat == true)
     {
-      bms_command = 'T';
+      Serial.println("T");
     }
     else
     {
-      bms_command = 'D';
+      Serial.println("D");
     }
-    Serial.write(bms_command);
+    previous_millis = current_millis;
   }
 
   if (current_millis - previous_millis >= delay_two)
   {
     //Serial.println((String) "Vmin: " + Vmin + "   Vmax: " + Vmax + "   Vtot: " + Vtot + "   Temp: " + temperature + "   PWM: " + charger_pwm_duty);
+    Serial.println((String)"PWM: " + charger_pwm_duty);
     previous_millis = current_millis;
   }
 
-  //while (Serial.available() > 0 && plug_in == true)
+  if (plug_is_locked == false)
+  {
+    EvseLocked();
+  }
+
+  if (evse_is_on == true)
+  {
+    ChargerControl();
+    analogWrite(charger_pwm_pin, charger_pwm_duty);
+  }
+
   while (Serial.available() > 0)
   {
-    data_string = Serial.readString();
-    data_string.replace(" ", "");
-    data_string.replace("*", "");
+    GetSerialData();
+  }
+}
 
-    if (change_bms_info == false)
+void GetSerialData()
+{
+  data_string = Serial.readString();
+  data_string.replace(" ", "");
+  data_string.replace("*", "");
+
+  if (bms_get_cellstat == true)
+  {
+    data_string.replace("N.C.", "");
+    temperature_index = data_string.indexOf("d2-7f") + 26; // find the location of certain strings
+    data_string.remove(0, temperature_index);              // remove everything until temp to free up memory
+    Vmin_index = data_string.indexOf("Vmin:") + 5;
+    Vmax_index = data_string.indexOf("Vmax:") + 5;
+    Vtot_index = data_string.indexOf("Vtot:") + 5;
+
+    temperature_string = data_string.substring(0, 6);
+    Vmin_string = data_string.substring(Vmin_index, Vmin_index + 5);
+    Vmax_string = data_string.substring(Vmax_index, Vmax_index + 5);
+    Vtot_string = data_string.substring(Vtot_index, Vtot_index + 5);
+
+    if (temperature_string.startsWith(String('-')))
     {
-      data_string.replace("N.C.", "");
-      temperature_index = data_string.indexOf("d2-7f") + 26; // find the location of certain strings
-      data_string.remove(0, temperature_index);              // remove everything until temp to free up memory
-      Vmin_index = data_string.indexOf("Vmin:") + 5;
-      Vmax_index = data_string.indexOf("Vmax:") + 5;
-      Vtot_index = data_string.indexOf("Vtot:") + 5;
-
-      temperature_string = data_string.substring(0, 6);
-      Vmin_string = data_string.substring(Vmin_index, Vmin_index + 5);
-      Vmax_string = data_string.substring(Vmax_index, Vmax_index + 5);
-      Vtot_string = data_string.substring(Vtot_index, Vtot_index + 5);
-
-      if (temperature_string.startsWith(String('-')))
-      {
-        temperature = temperature_string.toFloat();
-      }
-      else
-      {
-        temperature_string.remove(0, 1);
-        temperature_string.replace(String('S'), "");
-        temperature = temperature_string.toFloat();
-      }
-
-      Vmin = Vmin_string.toFloat(); // convert string to float
-      Vmax = Vmax_string.toFloat();
-      Vtot = Vtot_string.toFloat();
-      previous_millis = current_millis;
-      change_bms_info = !change_bms_info;
+      temperature = temperature_string.toFloat();
     }
     else
     {
-      int check_type = 0;
-      energy_dissipated_index = data_string.indexOf("dissipata") + 10;
-      data_string.remove(0, energy_dissipated_index);
-      for (check_type = 0; isDigit(data_string.charAt(check_type) == true); check_type++)
-      {
-      }
-      energy_dissipated_string = data_string.substring(0, check_type);
-      energy_dissipated = energy_dissipated_string.toFloat();
-      change_bms_info = !change_bms_info;
+      temperature_string.remove(0, 1);
+      temperature_string.replace(String('S'), "");
+      temperature = temperature_string.toFloat();
     }
 
-    ChargerControl();
+    Vmin = Vmin_string.toFloat(); // convert string to float
+    Vmax = Vmax_string.toFloat();
+    Vtot = Vtot_string.toFloat();
+    bms_get_cellstat = true;
   }
-
-  analogWrite(charger_pwm_pin, charger_pwm_duty);
+  else // bms get balance current
+  {
+    int check_type = 0;
+    energy_dissipated_index = data_string.indexOf("dissipata") + 10;
+    data_string.remove(0, energy_dissipated_index);
+    for (check_type = 0; isDigit(data_string.charAt(check_type) == true); check_type++)
+    {
+    }
+    energy_dissipated_string = data_string.substring(0, check_type);
+    energy_dissipated = energy_dissipated_string.toFloat();
+    bms_get_cellstat = true;
+  }
 }
 
 void ChargerControl()
@@ -312,11 +320,9 @@ void ChargerControl()
   }
 
   charger_speed = (map(charger_pwm_duty, 26, 229, 0, 27)) * Vtot / 1000;
-
-  return;
 }
 
-void EvseActuator()
+void EvseLocked()
 {
   if (evse_is_on == true && plug_is_locked == false) // if the evse is plugged in and not latched
   {
@@ -357,7 +363,11 @@ void WifiAutoConnect()
   }
   if (WiFi.status() == WL_NO_SSID_AVAIL || WiFi.status() == WL_CONNECT_FAILED)
   {
-    wifi_available = 0;
+    wifi_available =  false;
+  }
+  else
+  {
+    wifi_available = true;
   }
 }
 
