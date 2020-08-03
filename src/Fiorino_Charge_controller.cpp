@@ -15,10 +15,10 @@ void handleRoot();
 void handleJS();
 void handleFileList();
 
-long previous_millis = 0;
-unsigned long current_millis = 0;
-unsigned long delay_one = 5000;
-unsigned long delay_two = 100;
+unsigned long prev_millis_one = 0;
+unsigned long prev_millis_two = 0;
+const long delay_one = 10000;
+const long delay_two = 10000;
 
 /* Data */
 String data_string;
@@ -81,7 +81,7 @@ const char *ap_password = "3VLS042020";
 const char *ota_hostname = "FIORINO_ESP8266";
 const char *ota_password = "MaPe1!";
 int ssid_hidden = 0;
-int max_connection = 2;
+int max_connection = 3;
 int available_networks = 0;
 IPAddress local_ip(192, 168, 1, 173);
 IPAddress ap_ip(192, 168, 4, 22);
@@ -152,7 +152,7 @@ void loop()
   mdns.update();
   webSocket.loop();
   
-  current_millis = millis();
+  unsigned long current_millis = millis();
   evse_is_on = digitalRead(evse_pin);
   evse_is_on = !evse_is_on;
   voltage_is_limited = digitalRead(charger_lim_pin);
@@ -168,7 +168,7 @@ void loop()
     WifiAutoConnect();
   }
 
-  if (current_millis - previous_millis >= delay_one)
+  if (current_millis - prev_millis_one >= delay_one)
   {
     if (bms_get_cellstat == true)
     {
@@ -178,15 +178,16 @@ void loop()
     {
       Serial.println("D");
     }
-    previous_millis = current_millis;
+    prev_millis_one = current_millis;
   }
 
-  if (current_millis - previous_millis >= delay_two)
+  if (current_millis - prev_millis_two >= delay_two)
   {
     //Serial.println((String) "Vmin: " + Vmin + "   Vmax: " + Vmax + "   Vtot: " + Vtot + "   Temp: " + temperature + "   PWM: " + charger_pwm_duty);
-    Serial.println((String)"PWM: " + charger_pwm_duty);
-    Serial.println(WiFi.localIP());
-    previous_millis = current_millis;
+    //Serial.println((String)"PWM: " + charger_pwm_duty);
+
+    Serial.println("T");
+    prev_millis_two = current_millis;
   }
 
   if (plug_is_locked == false)
