@@ -17,7 +17,7 @@ void handleFileList();
 
 long previous_millis = 0;
 unsigned long current_millis = 0;
-unsigned long delay_one = 10000;
+unsigned long delay_one = 5000;
 unsigned long delay_two = 100;
 
 /* Data */
@@ -97,6 +97,7 @@ void setup()
 
   // Soft Acces Point and Station
   WiFi.mode(WIFI_AP_STA);
+  WiFi.config(local_ip,gateway, subnet);
   WiFi.begin(sta_ssid_one, sta_password_one);
   while (WiFi.status() != WL_CONNECTED)
   {
@@ -167,7 +168,7 @@ void loop()
     WifiAutoConnect();
   }
 
-  if (current_millis - previous_millis >= delay_one && evse_is_on == true)
+  if (current_millis - previous_millis >= delay_one)
   {
     if (bms_get_cellstat == true)
     {
@@ -184,6 +185,7 @@ void loop()
   {
     //Serial.println((String) "Vmin: " + Vmin + "   Vmax: " + Vmax + "   Vtot: " + Vtot + "   Temp: " + temperature + "   PWM: " + charger_pwm_duty);
     Serial.println((String)"PWM: " + charger_pwm_duty);
+    Serial.println(WiFi.localIP());
     previous_millis = current_millis;
   }
 
