@@ -110,9 +110,6 @@ void setup()
   // Over The Air update
   ArduinoOTA.setHostname(ota_hostname);
   ArduinoOTA.setPassword(ota_password);
-  ArduinoOTA.onEnd([]() {
-    ESP.restart();
-  });
   ArduinoOTA.begin();
 
   // Set up webserver
@@ -167,7 +164,7 @@ void loop()
   {
     WifiAutoConnect();
   }
-
+/*
   if (current_millis - prev_millis_one >= delay_one)
   {
     if (bms_get_cellstat == true)
@@ -179,13 +176,12 @@ void loop()
       Serial.println("D");
     }
     prev_millis_one = current_millis;
-  }
+  } */
 
   if (current_millis - prev_millis_two >= delay_two)
   {
     //Serial.println((String) "Vmin: " + Vmin + "   Vmax: " + Vmax + "   Vtot: " + Vtot + "   Temp: " + temperature + "   PWM: " + charger_pwm_duty);
-    //Serial.println((String)"PWM: " + charger_pwm_duty);
-
+    Serial.println((String)"PWM: " + charger_pwm_duty);
     Serial.println("T");
     prev_millis_two = current_millis;
   }
