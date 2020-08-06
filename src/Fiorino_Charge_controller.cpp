@@ -97,7 +97,7 @@ void setup()
 
   // Soft Acces Point and Station
   WiFi.mode(WIFI_AP_STA);
-  WiFi.config(local_ip,gateway, subnet);
+  //WiFi.config(local_ip,gateway, subnet);
   WiFi.begin(sta_ssid_one, sta_password_one);
   while (WiFi.status() != WL_CONNECTED)
   {
