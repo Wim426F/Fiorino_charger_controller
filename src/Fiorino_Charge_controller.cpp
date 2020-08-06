@@ -18,7 +18,7 @@ void handleFileList();
 unsigned long prev_millis_one = 0;
 unsigned long prev_millis_two = 0;
 const long delay_one = 10000;
-const long delay_two = 10000;
+const long delay_two = 2000;
 
 /* Data */
 String data_string;
@@ -125,11 +125,12 @@ void setup()
   //webSocket.onEvent(webSocketEvent);
 
   Serial.begin(115200);
+  //Serial.swap();
   while (!Serial)
   {
     delay(50);
   }
-
+  
   pinMode(evse_pin, INPUT_PULLUP);
   pinMode(charger_lim_pin, INPUT_PULLUP);
 
@@ -164,25 +165,26 @@ void loop()
   {
     WifiAutoConnect();
   }
-/*
+
   if (current_millis - prev_millis_one >= delay_one)
   {
+    
     if (bms_get_cellstat == true)
     {
-      Serial.println("T");
+      Serial.println("t");
     }
     else
     {
-      Serial.println("D");
+      Serial.println("d");
     }
     prev_millis_one = current_millis;
-  } */
+  } 
 
   if (current_millis - prev_millis_two >= delay_two)
   {
     //Serial.println((String) "Vmin: " + Vmin + "   Vmax: " + Vmax + "   Vtot: " + Vtot + "   Temp: " + temperature + "   PWM: " + charger_pwm_duty);
-    Serial.println((String)"PWM: " + charger_pwm_duty);
-    Serial.println("T");
+    //Serial.println((String)"PWM: " + charger_pwm_duty);
+    
     prev_millis_two = current_millis;
   }
 
@@ -193,13 +195,14 @@ void loop()
 
   if (evse_is_on == true)
   {
-    ChargerControl();
-    analogWrite(charger_pwm_pin, charger_pwm_duty);
+    //ChargerControl();
+    //analogWrite(charger_pwm_pin, charger_pwm_duty);
   }
+  analogWrite(charger_pwm_pin, 200);
 
   while (Serial.available() > 0)
   {
-    GetSerialData();
+    //GetSerialData();
   }
 }
 
