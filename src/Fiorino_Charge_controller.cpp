@@ -20,26 +20,25 @@ void EvseLocked();
 
 unsigned long prev_millis_one = 0;
 unsigned long prev_millis_two = 0;
+unsigned long prev_millis_three = 0;
+const unsigned long charger_timeout = 18000000; // 5 hours
 const long delay_one = 10000;
-const long delay_two = 2000;
+const long delay_two = 1000;
 
 /* Data */
 String data_string;
 String temperature_string;
 String Vmin_string;
 String Vmax_string;
-String Vtot_string;
 String energy_dissipated_string;
 
 int temperature_index = 0;
 int Vmin_index = 0;
 int Vmax_index = 0;
-int Vtot_index = 0;
 int energy_dissipated_index = 0;
 
 float Vmin = 0;
 float Vmax = 0;
-float Vtot = 0;
 float temperature = 0;
 float charger_pwm_duty = 0;
 float charger_speed = 0;
@@ -53,7 +52,6 @@ const float Vmin_lim = 3.000;
 const float Vmax_lim_low = 4.000;
 const float Vmax_lim_med = 4.100;
 const float Vmax_lim_max = 4.200;
-const float Vtot_lim = 300.000;
 const float energy_dissipated_max = 2000.00;
 
 /* Triggers */
@@ -76,14 +74,13 @@ const byte unlock_plug_P = D3;
 #endif
 
 #ifdef TARGET_TEENSY40
-#define Serial1 Serial2
 /* Inputs */
 const byte evse_pin = 3;
 const byte charger_lim_pin = 4;
 
 /* Outputs */
 const byte charger_pwm_pin = 5;
-const byte lock_plug_N = 9; // fet low side
+const byte lock_plug_N = 9;  // fet low side
 const byte lock_plug_P = 10; // fet high side
 const byte unlock_plug_N = 11;
 const byte unlock_plug_P = 12;
@@ -114,12 +111,13 @@ WebSocketsServer webSocket = WebSocketsServer(81);
 
 void setup()
 {
+  data_string.reserve(30000);
 #ifdef TARGET_ESP8266 // only on esp8266
   LittleFS.begin();
   WiFi.mode(WIFI_AP_STA);
   WiFi.config(local_ip, gateway, subnet);
   WiFi.begin(sta_ssid_one, sta_password_one);
-  
+
   while (WiFi.status() != WL_CONNECTED && wifi_timeout < 30)
   {
     delay(100);
@@ -165,7 +163,7 @@ void setup()
   pinMode(unlock_plug_N, OUTPUT);
   pinMode(unlock_plug_P, OUTPUT);
 
-  data_string.reserve(3700);
+  
 }
 
 void loop()
@@ -185,28 +183,28 @@ void loop()
 
   unsigned long current_millis = millis();
   evse_is_on = digitalRead(evse_pin);
-  evse_is_on = !evse_is_on;
+  //evse_is_on = !evse_is_on;
   voltage_is_limited = digitalRead(charger_lim_pin);
   voltage_is_limited = !voltage_is_limited;
 
   if (current_millis - prev_millis_one >= delay_one)
   {
-
     if (bms_get_cellstat == true)
-    { 
+    {
       Serial1.println("t");
+      Serial.println("t");
     }
     else
     {
       Serial1.println("d");
+      Serial.println("d");
     }
     prev_millis_one = current_millis;
   }
 
   if (current_millis - prev_millis_two >= delay_two)
   {
-    Serial.println((String) "Vmin: " + Vmin + "   Vmax: " + Vmax + "   Vtot: " + Vtot + "   Temp: " + temperature + "   PWM: " + charger_pwm_duty);
-    //Serial.println((String)"PWM: " + charger_pwm_duty);
+    Serial.println((String) "Vmin: " + Vmin + "   Vmax: " + Vmax + "   Temp: " + temperature + "   PWM: " + charger_pwm_duty);
     prev_millis_two = current_millis;
   }
 
@@ -229,24 +227,23 @@ void loop()
 
 void GetSerialData()
 {
-  data_string = Serial.readString();
+  data_string = Serial1.readString();
   data_string.replace(" ", "");
   data_string.replace("*", "");
+  data_string.replace("N.C.", "");
 
   if (bms_get_cellstat == true)
   {
-    data_string.replace("N.C.", "");
-    temperature_index = data_string.indexOf("d2-7f") + 26; // find the location of certain strings
-    data_string.remove(0, temperature_index);              // remove everything until temp to free up memory
+    temperature_index = data_string.indexOf("d2-7f"); // find the location of certain strings
+    //data_string.remove(0, temperature_index);
+    delay(5);
     Vmin_index = data_string.indexOf("Vmin:") + 5;
     Vmax_index = data_string.indexOf("Vmax:") + 5;
-    Vtot_index = data_string.indexOf("Vtot:") + 5;
 
-    temperature_string = data_string.substring(0, 6);
+    temperature_string = data_string.substring(temperature_index, temperature_index + 5);
     Vmin_string = data_string.substring(Vmin_index, Vmin_index + 5);
     Vmax_string = data_string.substring(Vmax_index, Vmax_index + 5);
-    Vtot_string = data_string.substring(Vtot_index, Vtot_index + 5);
-
+    /*
     if (temperature_string.startsWith(String('-')))
     {
       temperature = temperature_string.toFloat();
@@ -257,10 +254,9 @@ void GetSerialData()
       temperature_string.replace(String('S'), "");
       temperature = temperature_string.toFloat();
     }
-
+    */
     Vmin = Vmin_string.toFloat(); // convert string to float
     Vmax = Vmax_string.toFloat();
-    Vtot = Vtot_string.toFloat();
     bms_get_cellstat = true;
   }
   else // bms get balance current
@@ -281,33 +277,33 @@ void ChargerControl()
 {
   if (Vmin < Vmin_lim)
   {
-    charger_pwm_duty = 229 - (Vmin_lim - Vmin) * 200;
-    if (charger_pwm_duty < 26)
+    charger_pwm_duty = 915 - (Vmin_lim - Vmin) * 1000 - 100;
+    if (charger_pwm_duty < 150)
     {
-      charger_pwm_duty = 26;
+      charger_pwm_duty = 150;
     }
   }
 
   if (Vmin >= Vmin_lim && Vmax <= Vmax_lim_low)
   {
-    charger_pwm_duty = 229;
+    charger_pwm_duty = 915;
   }
 
   if (Vmin >= Vmin_lim && Vmax > Vmax_lim_low && Vmax <= Vmax_lim_med && voltage_is_limited == true)
   {
-    charger_pwm_duty = (Vmax_lim_med - Vmax) * 2040 + 25; // PWM is from 26 > 229 (10% > 90%)
+    charger_pwm_duty = (Vmax_lim_med - Vmax) * 4096 + 150; // PWM is from 150 > 915 (15% > 90%)
   }
 
   if (Vmin >= Vmin_lim && Vmax >= Vmax_lim_low && Vmax <= Vmax_lim_max && voltage_is_limited == false)
   {
-    charger_pwm_duty = (Vmax_lim_max - Vmax) * 1020 + 25;
+    charger_pwm_duty = (Vmax_lim_max - Vmax) * 3800 + 150;
   }
 
-  if ((Vmax > Vmax_lim_max || Vtot > Vtot_lim) || (Vmax > Vmax_lim_med && voltage_is_limited == true))
+  if (Vmax > Vmax_lim_max || (Vmax > Vmax_lim_med && voltage_is_limited == true))
   {
     charger_pwm_duty = 0;
   }
-
+  /*
   if (temperature <= temperature_min)
   {
     if (temperature_min - temperature > temperature_dif_max)
@@ -331,8 +327,9 @@ void ChargerControl()
       charger_pwm_duty -= (temperature - temperature_max) * 10;
     }
   }
+  */
 
-  if ((charger_pwm_duty > 0 && charger_pwm_duty < 26) || charger_pwm_duty < 0)
+  if ((charger_pwm_duty > 0 && charger_pwm_duty < 100) || charger_pwm_duty < 0)
   {
     charger_pwm_duty = 0;
   }
@@ -342,12 +339,12 @@ void ChargerControl()
     charger_pwm_duty = 0;
   }
 
-  charger_speed = (map(charger_pwm_duty, 26, 229, 0, 27)) * Vtot / 1000;
+  charger_speed = map(charger_pwm_duty, 100, 915, 0, 100);
 }
 
 void EvseLocked()
 {
-  #if defined(TARGET_ESP8266)
+#if defined(TARGET_ESP8266)
   if (evse_is_on == true && plug_is_locked == false) // if the evse is plugged in and not latched
   {
     analogWrite(unlock_plug_P, 255); // switch P fet unlock off
@@ -368,7 +365,7 @@ void EvseLocked()
     analogWrite(unlock_plug_N, 255); // turn N fet unlock on
     plug_is_locked = false;
   }
-  #endif
+#endif
 }
 
 void WifiAutoConnect()
