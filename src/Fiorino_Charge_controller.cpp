@@ -1,4 +1,6 @@
 #include <Arduino.h>
+
+#if defined(TARGET_ESP8266)
 #include <ArduinoOTA.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
@@ -6,14 +8,15 @@
 #include <WebSocketsServer.h>
 #include <WiFiClient.h>
 #include <LittleFS.h>
+#endif
 
-void GetSerialData();
-void ChargerControl();
-void EvseLocked();
 void WifiAutoConnect();
 void handleRoot();
 void handleJS();
 void handleFileList();
+void GetSerialData();
+void ChargerControl();
+void EvseLocked();
 
 unsigned long prev_millis_one = 0;
 unsigned long prev_millis_two = 0;
@@ -58,8 +61,8 @@ boolean plug_is_locked = false;
 boolean evse_is_on = false;
 boolean voltage_is_limited = false;
 boolean bms_get_cellstat = true;
-boolean wifi_available = false;
 
+#ifdef TARGET_ESP8266
 /* Inputs */
 const byte evse_pin = D5;
 const byte charger_lim_pin = D6;
@@ -70,8 +73,24 @@ const byte lock_plug_N = D1; // fet low side
 const byte lock_plug_P = D2; // fet high side
 const byte unlock_plug_N = D4;
 const byte unlock_plug_P = D3;
+#endif
+
+#ifdef TARGET_TEENSY40
+#define Serial1 Serial2
+/* Inputs */
+const byte evse_pin = 3;
+const byte charger_lim_pin = 4;
+
+/* Outputs */
+const byte charger_pwm_pin = 5;
+const byte lock_plug_N = 9; // fet low side
+const byte lock_plug_P = 10; // fet high side
+const byte unlock_plug_N = 11;
+const byte unlock_plug_P = 12;
+#endif
 
 /* Wifi */
+#ifdef TARGET_ESP8266
 const char *sta_ssid_one = "Boone-Huis";
 const char *sta_password_one = "b00n3meubelstof@";
 const char *sta_ssid_two = "BooneZaak";
@@ -83,6 +102,7 @@ const char *ota_password = "MaPe1!";
 int ssid_hidden = 0;
 int max_connection = 3;
 int available_networks = 0;
+int wifi_timeout = 0;
 IPAddress local_ip(192, 168, 1, 173);
 IPAddress ap_ip(192, 168, 4, 22);
 IPAddress gateway(192, 168, 4, 9);
@@ -90,20 +110,21 @@ IPAddress subnet(255, 255, 255, 0);
 ESP8266WebServer server(80);
 MDNSResponder mdns;
 WebSocketsServer webSocket = WebSocketsServer(81);
+#endif
 
 void setup()
 {
+#ifdef TARGET_ESP8266 // only on esp8266
   LittleFS.begin();
-
-  // Soft Acces Point and Station
   WiFi.mode(WIFI_AP_STA);
-  //WiFi.config(local_ip,gateway, subnet);
+  WiFi.config(local_ip, gateway, subnet);
   WiFi.begin(sta_ssid_one, sta_password_one);
-  while (WiFi.status() != WL_CONNECTED)
+  
+  while (WiFi.status() != WL_CONNECTED && wifi_timeout < 30)
   {
     delay(100);
+    wifi_timeout++;
   }
-  wifi_available = true;
   WiFi.softAPConfig(ap_ip, gateway, subnet);
   WiFi.softAP(ap_ssid, ap_password, ssid_hidden, max_connection);
 
@@ -117,20 +138,24 @@ void setup()
   mdns.begin("fiorino");
 
   server.on("/", handleRoot);
-  //server.addHandler(RequestHandler );
+  //server.addHandler(new Pureknob, / pureknob.js);
   server.on("/pureknob.js", handleJS);
   server.on("/list", handleFileList);
   server.begin();
   //webSocket.begin();
   //webSocket.onEvent(webSocketEvent);
-
+#endif
   Serial.begin(115200);
-  //Serial.swap();
   while (!Serial)
   {
-    delay(50);
+    delay(10);
   }
-  
+  Serial1.begin(115200);
+  while (!Serial)
+  {
+    delay(10);
+  }
+
   pinMode(evse_pin, INPUT_PULLUP);
   pinMode(charger_lim_pin, INPUT_PULLUP);
 
@@ -145,46 +170,43 @@ void setup()
 
 void loop()
 {
+#ifdef TARGET_ESP8266
   ArduinoOTA.handle();
   server.handleClient();
   mdns.update();
   webSocket.loop();
-  
+
+  available_networks = WiFi.scanNetworks(sta_ssid_one, sta_ssid_two);
+  if (WiFi.status() != WL_CONNECTED && available_networks > 0)
+  {
+    WifiAutoConnect();
+  }
+#endif
+
   unsigned long current_millis = millis();
   evse_is_on = digitalRead(evse_pin);
   evse_is_on = !evse_is_on;
   voltage_is_limited = digitalRead(charger_lim_pin);
   voltage_is_limited = !voltage_is_limited;
 
-  if (wifi_available == false)
-  {
-    available_networks = WiFi.scanNetworks(sta_ssid_one, sta_ssid_two); 
-  }
-
-  if (WiFi.status() != WL_CONNECTED && available_networks > 0)
-  {
-    WifiAutoConnect();
-  }
-
   if (current_millis - prev_millis_one >= delay_one)
   {
-    
+
     if (bms_get_cellstat == true)
-    {
-      Serial.println("t");
+    { 
+      Serial1.println("t");
     }
     else
     {
-      Serial.println("d");
+      Serial1.println("d");
     }
     prev_millis_one = current_millis;
-  } 
+  }
 
   if (current_millis - prev_millis_two >= delay_two)
   {
-    //Serial.println((String) "Vmin: " + Vmin + "   Vmax: " + Vmax + "   Vtot: " + Vtot + "   Temp: " + temperature + "   PWM: " + charger_pwm_duty);
+    Serial.println((String) "Vmin: " + Vmin + "   Vmax: " + Vmax + "   Vtot: " + Vtot + "   Temp: " + temperature + "   PWM: " + charger_pwm_duty);
     //Serial.println((String)"PWM: " + charger_pwm_duty);
-    
     prev_millis_two = current_millis;
   }
 
@@ -195,14 +217,13 @@ void loop()
 
   if (evse_is_on == true)
   {
-    //ChargerControl();
-    //analogWrite(charger_pwm_pin, charger_pwm_duty);
+    ChargerControl();
+    analogWrite(charger_pwm_pin, charger_pwm_duty);
   }
-  analogWrite(charger_pwm_pin, 200);
 
-  while (Serial.available() > 0)
+  while (Serial1.available() > 0)
   {
-    //GetSerialData();
+    GetSerialData();
   }
 }
 
@@ -326,6 +347,7 @@ void ChargerControl()
 
 void EvseLocked()
 {
+  #if defined(TARGET_ESP8266)
   if (evse_is_on == true && plug_is_locked == false) // if the evse is plugged in and not latched
   {
     analogWrite(unlock_plug_P, 255); // switch P fet unlock off
@@ -346,10 +368,12 @@ void EvseLocked()
     analogWrite(unlock_plug_N, 255); // turn N fet unlock on
     plug_is_locked = false;
   }
+  #endif
 }
 
 void WifiAutoConnect()
 {
+#if defined(TARGET_ESP8266)
   WiFi.begin(sta_ssid_one, sta_password_one);
   while (WiFi.status() != WL_CONNECTED)
   {
@@ -363,32 +387,30 @@ void WifiAutoConnect()
   {
     delay(50);
   }
-  if (WiFi.status() == WL_NO_SSID_AVAIL || WiFi.status() == WL_CONNECT_FAILED)
-  {
-    wifi_available =  false;
-  }
-  else
-  {
-    wifi_available = true;
-  }
+#endif
 }
 
 void handleRoot()
 {
+#if defined(TARGET_ESP8266)
   File file = LittleFS.open("/index.xhtml", "r"); // read webpage from filesystem
   server.streamFile(file, "application/xhtml");
   file.close();
+#endif
 }
 
 void handleJS()
 {
+#if defined(TARGET_ESP8266)
   File file = LittleFS.open("pureknob.js", "r");
   server.streamFile(file, "text/javascript");
   file.close();
+#endif
 }
 
 void handleFileList()
 {
+#if defined(TARGET_ESP8266)
   String path = "/";
   // Assuming there are no subdirectories
   Dir dir = LittleFS.openDir(path);
@@ -404,4 +426,5 @@ void handleFileList()
   }
   output += "]";
   server.send(200, "text/plain", output);
+#endif
 }
