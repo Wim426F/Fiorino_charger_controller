@@ -1,6 +1,6 @@
 #include <Arduino.h>
 
-#if defined(TARGET_ESP8266)
+#ifdef TARGET_ESP8266
 #include <ArduinoOTA.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
@@ -8,6 +8,16 @@
 #include <WebSocketsServer.h>
 #include <WiFiClient.h>
 #include <LittleFS.h>
+#elif defined(TARGET_ESP32)
+#include <ArduinoOTA.h>
+#include <WiFi.h>
+#include <WiFiClient.h>
+#include <WiFiUdp.h>
+#include <WebServer.h>
+#include <WebSocketsServer.h>
+#include <ESPmDNS>
+#include <SD.h>
+#include <SPI.h>
 #endif
 
 void WifiAutoConnect();
@@ -17,32 +27,34 @@ void handleFileList();
 void GetSerialData();
 void ChargerControl();
 void EvseLocked();
+void getData();
+//void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length);
 
 unsigned long prev_millis_one = 0;
 unsigned long prev_millis_two = 0;
 unsigned long prev_millis_three = 0;
 const unsigned long charger_timeout = 18000000; // 5 hours
-const long delay_one = 10000;
-const long delay_two = 1000;
+const long delay_one = 15000;
+const long delay_two = 2000;
 
 /* Data */
-String data_string;
-String temperature_string;
-String Vmin_string;
-String Vmax_string;
-String energy_dissipated_string;
+String serial_str;
+String temperature_str;
+String Vmin_str;
+String Vmax_str;
+String dissipated_nrg_str;
 
-int temperature_index = 0;
-int Vmin_index = 0;
-int Vmax_index = 0;
-int energy_dissipated_index = 0;
+int temperature_idx = 0;
+int Vmin_idx = 0;
+int Vmax_idx = 0;
+int dissipated_nrg_idx = 0;
 
 float Vmin = 0;
 float Vmax = 0;
 float temperature = 0;
 float charger_pwm_duty = 0;
 float charger_speed = 0;
-float energy_dissipated = 0;
+float dissipated_nrg = 0;
 
 /* Limits */
 const float temperature_min = 0.0;
@@ -52,13 +64,13 @@ const float Vmin_lim = 3.000;
 const float Vmax_lim_low = 4.000;
 const float Vmax_lim_med = 4.100;
 const float Vmax_lim_max = 4.200;
-const float energy_dissipated_max = 2000.00;
+const float dissipated_nrg_max = 2000.00;
 
 /* Triggers */
-boolean plug_is_locked = false;
-boolean evse_is_on = false;
-boolean voltage_is_limited = false;
-boolean bms_get_cellstat = true;
+boolean plug_locked = false;
+boolean evse_on = false;
+boolean voltage_lim = false;
+boolean bms_get_stat = true;
 
 #ifdef TARGET_ESP8266
 /* Inputs */
@@ -111,7 +123,7 @@ WebSocketsServer webSocket = WebSocketsServer(81);
 
 void setup()
 {
-  data_string.reserve(30000);
+  serial_str.reserve(5000);
 #ifdef TARGET_ESP8266 // only on esp8266
   LittleFS.begin();
   WiFi.mode(WIFI_AP_STA);
@@ -136,12 +148,12 @@ void setup()
   mdns.begin("fiorino");
 
   server.on("/", handleRoot);
-  //server.addHandler(new Pureknob, / pureknob.js);
+  //server.addHandler(new handleJS("/pureknob.js"));
   server.on("/pureknob.js", handleJS);
   server.on("/list", handleFileList);
   server.begin();
-  //webSocket.begin();
-  //webSocket.onEvent(webSocketEvent);
+  webSocket.begin();
+  webSocket.onEvent(webSocketEvent);
 #endif
   Serial.begin(115200);
   while (!Serial)
@@ -162,13 +174,11 @@ void setup()
   pinMode(lock_plug_P, OUTPUT);
   pinMode(unlock_plug_N, OUTPUT);
   pinMode(unlock_plug_P, OUTPUT);
-
-  
 }
 
 void loop()
 {
-#ifdef TARGET_ESP8266
+#ifdef TARGET_ESP8266 
   ArduinoOTA.handle();
   server.handleClient();
   mdns.update();
@@ -182,14 +192,14 @@ void loop()
 #endif
 
   unsigned long current_millis = millis();
-  evse_is_on = digitalRead(evse_pin);
-  //evse_is_on = !evse_is_on;
-  voltage_is_limited = digitalRead(charger_lim_pin);
-  voltage_is_limited = !voltage_is_limited;
+  evse_on = digitalRead(evse_pin);
+  //evse_on = !evse_on;
+  voltage_lim = digitalRead(charger_lim_pin);
+  voltage_lim = !voltage_lim;
 
   if (current_millis - prev_millis_one >= delay_one)
   {
-    if (bms_get_cellstat == true)
+    if (bms_get_stat == true)
     {
       Serial1.println("t");
       Serial.println("t");
@@ -204,16 +214,18 @@ void loop()
 
   if (current_millis - prev_millis_two >= delay_two)
   {
+    GetSerialData();
+    //Serial.println(serial_str);
     Serial.println((String) "Vmin: " + Vmin + "   Vmax: " + Vmax + "   Temp: " + temperature + "   PWM: " + charger_pwm_duty);
     prev_millis_two = current_millis;
   }
 
-  if (plug_is_locked == false)
+  if (plug_locked == false)
   {
     EvseLocked();
   }
 
-  if (evse_is_on == true)
+  if (evse_on == true)
   {
     ChargerControl();
     analogWrite(charger_pwm_pin, charger_pwm_duty);
@@ -221,55 +233,57 @@ void loop()
 
   while (Serial1.available() > 0)
   {
-    GetSerialData();
+    delay(2); //delay to allow byte to arrive in input buffer
+    char c = Serial1.read();
+    serial_str += c;
   }
+
 }
 
 void GetSerialData()
 {
-  data_string = Serial1.readString();
-  data_string.replace(" ", "");
-  data_string.replace("*", "");
-  data_string.replace("N.C.", "");
+  serial_str.replace(" ", "");
+  serial_str.replace("*", "");
+  serial_str.replace("N.C.", "");
 
-  if (bms_get_cellstat == true)
+  if (bms_get_stat == true)
   {
-    temperature_index = data_string.indexOf("d2-7f"); // find the location of certain strings
-    //data_string.remove(0, temperature_index);
+    temperature_idx = serial_str.indexOf("SOC") - 5; // find the location of certain strings
+    //data_string.remove(0, temperature_idx);
     delay(5);
-    Vmin_index = data_string.indexOf("Vmin:") + 5;
-    Vmax_index = data_string.indexOf("Vmax:") + 5;
+    Vmin_idx = serial_str.indexOf("Vmin:") + 5;
+    Vmax_idx = serial_str.indexOf("Vmax:") + 5;
 
-    temperature_string = data_string.substring(temperature_index, temperature_index + 5);
-    Vmin_string = data_string.substring(Vmin_index, Vmin_index + 5);
-    Vmax_string = data_string.substring(Vmax_index, Vmax_index + 5);
-    /*
-    if (temperature_string.startsWith(String('-')))
+    temperature_str = serial_str.substring(temperature_idx, temperature_idx + 5);
+    Vmin_str = serial_str.substring(Vmin_idx, Vmin_idx + 5);
+    Vmax_str = serial_str.substring(Vmax_idx, Vmax_idx + 5);
+    
+    if (temperature_str.startsWith(String('-')))
     {
-      temperature = temperature_string.toFloat();
+      temperature = temperature_str.toFloat();
     }
     else
     {
-      temperature_string.remove(0, 1);
-      temperature_string.replace(String('S'), "");
-      temperature = temperature_string.toFloat();
+      temperature_str.remove(0, 1);
+      temperature_str.replace(String('S'), "");
+      temperature = temperature_str.toFloat();
     }
-    */
-    Vmin = Vmin_string.toFloat(); // convert string to float
-    Vmax = Vmax_string.toFloat();
-    bms_get_cellstat = true;
+    
+    Vmin = Vmin_str.toFloat(); // convert string to float
+    Vmax = Vmax_str.toFloat();
+    bms_get_stat = true;
   }
   else // bms get balance current
   {
     int check_type = 0;
-    energy_dissipated_index = data_string.indexOf("dissipata") + 10;
-    data_string.remove(0, energy_dissipated_index);
-    for (check_type = 0; isDigit(data_string.charAt(check_type) == true); check_type++)
+    dissipated_nrg_idx = serial_str.indexOf("dissipata") + 10;
+    serial_str.remove(0, dissipated_nrg_idx);
+    for (check_type = 0; isDigit(serial_str.charAt(check_type) == true); check_type++)
     {
     }
-    energy_dissipated_string = data_string.substring(0, check_type);
-    energy_dissipated = energy_dissipated_string.toFloat();
-    bms_get_cellstat = true;
+    dissipated_nrg_str = serial_str.substring(0, check_type);
+    dissipated_nrg = dissipated_nrg_str.toFloat();
+    bms_get_stat = true;
   }
 }
 
@@ -289,21 +303,21 @@ void ChargerControl()
     charger_pwm_duty = 915;
   }
 
-  if (Vmin >= Vmin_lim && Vmax > Vmax_lim_low && Vmax <= Vmax_lim_med && voltage_is_limited == true)
+  if (Vmin >= Vmin_lim && Vmax > Vmax_lim_low && Vmax <= Vmax_lim_med && voltage_lim == true)
   {
     charger_pwm_duty = (Vmax_lim_med - Vmax) * 4096 + 150; // PWM is from 150 > 915 (15% > 90%)
   }
 
-  if (Vmin >= Vmin_lim && Vmax >= Vmax_lim_low && Vmax <= Vmax_lim_max && voltage_is_limited == false)
+  if (Vmin >= Vmin_lim && Vmax >= Vmax_lim_low && Vmax <= Vmax_lim_max && voltage_lim == false)
   {
     charger_pwm_duty = (Vmax_lim_max - Vmax) * 3800 + 150;
   }
 
-  if (Vmax > Vmax_lim_max || (Vmax > Vmax_lim_med && voltage_is_limited == true))
+  if (Vmax > Vmax_lim_max || (Vmax > Vmax_lim_med && voltage_lim == true))
   {
     charger_pwm_duty = 0;
   }
-  /*
+  
   if (temperature <= temperature_min)
   {
     if (temperature_min - temperature > temperature_dif_max)
@@ -327,14 +341,14 @@ void ChargerControl()
       charger_pwm_duty -= (temperature - temperature_max) * 10;
     }
   }
-  */
+  
 
   if ((charger_pwm_duty > 0 && charger_pwm_duty < 100) || charger_pwm_duty < 0)
   {
     charger_pwm_duty = 0;
   }
 
-  if (energy_dissipated > energy_dissipated_max)
+  if (dissipated_nrg > dissipated_nrg_max)
   {
     charger_pwm_duty = 0;
   }
@@ -345,7 +359,7 @@ void ChargerControl()
 void EvseLocked()
 {
 #if defined(TARGET_ESP8266)
-  if (evse_is_on == true && plug_is_locked == false) // if the evse is plugged in and not latched
+  if (evse_on == true && plug_locked == false) // if the evse is plugged in and not latched
   {
     analogWrite(unlock_plug_P, 255); // switch P fet unlock off
     analogWrite(unlock_plug_N, 0);   // switch N fet unlock off
@@ -353,17 +367,17 @@ void EvseLocked()
     analogWrite(lock_plug_P, 0);     // switch P fet lock on
     analogWrite(lock_plug_N, 255);   // switch N fet lock on
     delayMicroseconds(1);
-    plug_is_locked = true;
+    plug_locked = true;
   }
 
-  if (evse_is_on == false && plug_is_locked == true) // if the evse is stopped
+  if (evse_on == false && plug_locked == true) // if the evse is stopped
   {
     analogWrite(lock_plug_P, 255);   // turn P fet lock off
     analogWrite(lock_plug_N, 0);     // turn N fet lock off
     delayMicroseconds(1);            // wait for fet delay & fall time
     analogWrite(unlock_plug_P, 0);   // turn P fet unlock on
     analogWrite(unlock_plug_N, 255); // turn N fet unlock on
-    plug_is_locked = false;
+    plug_locked = false;
   }
 #endif
 }
@@ -425,3 +439,26 @@ void handleFileList()
   server.send(200, "text/plain", output);
 #endif
 }
+
+
+void getData()
+{
+  #ifdef TARGET_ESP8266
+  String Vmin_json = "{\"vmin\":";
+  Vmin_json += Vmin;
+  Vmin_json += "}";
+  webSocket.broadcastTXT(Vmin_json.c_str(), Vmin_json.length());
+
+  String Vmax_json = "{\"vmin\":";
+  Vmax_json += Vmin;
+  Vmax_json += "}";
+  webSocket.broadcastTXT(Vmax_json.c_str(), Vmax_json.length());
+  #endif
+}
+
+#ifdef TARGET_ESP8266
+void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
+{
+  // Do something with the data from the client
+}
+#endif
