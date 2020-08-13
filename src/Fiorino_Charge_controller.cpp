@@ -1,24 +1,15 @@
 #include <Arduino.h>
-
-#ifdef TARGET_ESP8266
-#include <ArduinoOTA.h>
-#include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
-#include <ESP8266mDNS.h>
-#include <WebSocketsServer.h>
-#include <WiFiClient.h>
-#include <LittleFS.h>
-#elif defined(TARGET_ESP32)
 #include <ArduinoOTA.h>
 #include <WiFi.h>
+#include <ESPmDNS.h>
 #include <WiFiClient.h>
 #include <WiFiUdp.h>
 #include <WebServer.h>
 #include <WebSocketsServer.h>
-#include <ESPmDNS>
 #include <SD.h>
 #include <SPI.h>
-#endif
+#include <FS.h>
+#include <analogWrite.h>
 
 void WifiAutoConnect();
 void handleRoot();
@@ -34,8 +25,8 @@ unsigned long prev_millis_one = 0;
 unsigned long prev_millis_two = 0;
 unsigned long prev_millis_three = 0;
 const unsigned long charger_timeout = 18000000; // 5 hours
-const long delay_one = 15000;
-const long delay_two = 2000;
+const long delay_one = 30000;
+const long delay_two = 5000;
 
 /* Data */
 String serial_str;
@@ -66,13 +57,15 @@ const float Vmax_lim_med = 4.100;
 const float Vmax_lim_max = 4.200;
 const float dissipated_nrg_max = 2000.00;
 
+int rx_timeout;
+
 /* Triggers */
 boolean plug_locked = false;
 boolean evse_on = false;
 boolean voltage_lim = false;
 boolean bms_get_stat = true;
 
-#ifdef TARGET_ESP8266
+
 /* Inputs */
 const byte evse_pin = D5;
 const byte charger_lim_pin = D6;
@@ -83,23 +76,9 @@ const byte lock_plug_N = D1; // fet low side
 const byte lock_plug_P = D2; // fet high side
 const byte unlock_plug_N = D4;
 const byte unlock_plug_P = D3;
-#endif
 
-#ifdef TARGET_TEENSY40
-/* Inputs */
-const byte evse_pin = 3;
-const byte charger_lim_pin = 4;
-
-/* Outputs */
-const byte charger_pwm_pin = 5;
-const byte lock_plug_N = 9;  // fet low side
-const byte lock_plug_P = 10; // fet high side
-const byte unlock_plug_N = 11;
-const byte unlock_plug_P = 12;
-#endif
 
 /* Wifi */
-#ifdef TARGET_ESP8266
 const char *sta_ssid_one = "Boone-Huis";
 const char *sta_password_one = "b00n3meubelstof@";
 const char *sta_ssid_two = "BooneZaak";
@@ -116,16 +95,33 @@ IPAddress local_ip(192, 168, 1, 173);
 IPAddress ap_ip(192, 168, 4, 22);
 IPAddress gateway(192, 168, 4, 9);
 IPAddress subnet(255, 255, 255, 0);
-ESP8266WebServer server(80);
+WebServer server(80);
 MDNSResponder mdns;
 WebSocketsServer webSocket = WebSocketsServer(81);
-#endif
+
+void start_mdns_service()
+{
+    //initialize mDNS service
+    esp_err_t err = mdns_init();
+    if (err) {
+        printf("MDNS Init failed: %d\n", err);
+        return;
+    }
+    //set hostname
+    mdns_hostname_set("myfiorino");
+    //set default instance
+    mdns_instance_name_set("Fiorino");
+}
+
+void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
+{
+  // Do something with the data from the client
+}
 
 void setup()
 {
   serial_str.reserve(5000);
-#ifdef TARGET_ESP8266 // only on esp8266
-  LittleFS.begin();
+  SD.begin(8);
   WiFi.mode(WIFI_AP_STA);
   WiFi.config(local_ip, gateway, subnet);
   WiFi.begin(sta_ssid_one, sta_password_one);
@@ -134,6 +130,11 @@ void setup()
   {
     delay(100);
     wifi_timeout++;
+    if (wifi_timeout >= 10)
+    {
+      wifi_timeout = 0;
+      break;
+    }
   }
   WiFi.softAPConfig(ap_ip, gateway, subnet);
   WiFi.softAP(ap_ssid, ap_password, ssid_hidden, max_connection);
@@ -144,9 +145,7 @@ void setup()
   ArduinoOTA.begin();
 
   // Set up webserver
-  mdns.addService("http", "tcp", 80);
-  mdns.begin("fiorino");
-
+  start_mdns_service();
   server.on("/", handleRoot);
   //server.addHandler(new handleJS("/pureknob.js"));
   server.on("/pureknob.js", handleJS);
@@ -154,7 +153,10 @@ void setup()
   server.begin();
   webSocket.begin();
   webSocket.onEvent(webSocketEvent);
-#endif
+
+  analogWriteResolution(10);
+  analogWriteFrequency(1000);
+  analogWrite(charger_pwm_pin, 30);
   Serial.begin(115200);
   while (!Serial)
   {
@@ -174,14 +176,13 @@ void setup()
   pinMode(lock_plug_P, OUTPUT);
   pinMode(unlock_plug_N, OUTPUT);
   pinMode(unlock_plug_P, OUTPUT);
+  delay(3000);
 }
 
 void loop()
 {
-#ifdef TARGET_ESP8266 
   ArduinoOTA.handle();
   server.handleClient();
-  mdns.update();
   webSocket.loop();
 
   available_networks = WiFi.scanNetworks(sta_ssid_one, sta_ssid_two);
@@ -189,7 +190,6 @@ void loop()
   {
     WifiAutoConnect();
   }
-#endif
 
   unsigned long current_millis = millis();
   evse_on = digitalRead(evse_pin);
@@ -199,22 +199,40 @@ void loop()
 
   if (current_millis - prev_millis_one >= delay_one)
   {
-    if (bms_get_stat == true)
+    Serial1.println("t");
+    Serial.println("t");
+
+    while (Serial1.available() == 0 && rx_timeout <= 8)
     {
-      Serial1.println("t");
-      Serial.println("t");
+      rx_timeout++;
+      delay(1000);
+      Serial.println("waiting for incoming data");
     }
-    else
+    if (rx_timeout >= 5)
     {
-      Serial1.println("d");
-      Serial.println("d");
+      Serial.println("No data received: timeout");
+      rx_timeout = 0;
+    }
+
+    while (Serial1.available() > 0)
+    {
+      delay(1); //delay to allow byte to arrive in input buffer
+      char c = Serial1.read();
+      serial_str += c;
+    }
+    if (serial_str.length() > 0)
+    {
+      GetSerialData();
+      Serial.println("BMS data received!");
+      ChargerControl();
+      serial_str = "";
     }
     prev_millis_one = current_millis;
   }
 
   if (current_millis - prev_millis_two >= delay_two)
   {
-    GetSerialData();
+
     //Serial.println(serial_str);
     Serial.println((String) "Vmin: " + Vmin + "   Vmax: " + Vmax + "   Temp: " + temperature + "   PWM: " + charger_pwm_duty);
     prev_millis_two = current_millis;
@@ -227,17 +245,8 @@ void loop()
 
   if (evse_on == true)
   {
-    ChargerControl();
     analogWrite(charger_pwm_pin, charger_pwm_duty);
   }
-
-  while (Serial1.available() > 0)
-  {
-    delay(2); //delay to allow byte to arrive in input buffer
-    char c = Serial1.read();
-    serial_str += c;
-  }
-
 }
 
 void GetSerialData()
@@ -257,7 +266,7 @@ void GetSerialData()
     temperature_str = serial_str.substring(temperature_idx, temperature_idx + 5);
     Vmin_str = serial_str.substring(Vmin_idx, Vmin_idx + 5);
     Vmax_str = serial_str.substring(Vmax_idx, Vmax_idx + 5);
-    
+
     if (temperature_str.startsWith(String('-')))
     {
       temperature = temperature_str.toFloat();
@@ -268,7 +277,7 @@ void GetSerialData()
       temperature_str.replace(String('S'), "");
       temperature = temperature_str.toFloat();
     }
-    
+
     Vmin = Vmin_str.toFloat(); // convert string to float
     Vmax = Vmax_str.toFloat();
     bms_get_stat = true;
@@ -317,7 +326,7 @@ void ChargerControl()
   {
     charger_pwm_duty = 0;
   }
-  
+
   if (temperature <= temperature_min)
   {
     if (temperature_min - temperature > temperature_dif_max)
@@ -341,7 +350,6 @@ void ChargerControl()
       charger_pwm_duty -= (temperature - temperature_max) * 10;
     }
   }
-  
 
   if ((charger_pwm_duty > 0 && charger_pwm_duty < 100) || charger_pwm_duty < 0)
   {
@@ -358,7 +366,6 @@ void ChargerControl()
 
 void EvseLocked()
 {
-#if defined(TARGET_ESP8266)
   if (evse_on == true && plug_locked == false) // if the evse is plugged in and not latched
   {
     analogWrite(unlock_plug_P, 255); // switch P fet unlock off
@@ -379,12 +386,10 @@ void EvseLocked()
     analogWrite(unlock_plug_N, 255); // turn N fet unlock on
     plug_locked = false;
   }
-#endif
 }
 
 void WifiAutoConnect()
 {
-#if defined(TARGET_ESP8266)
   WiFi.begin(sta_ssid_one, sta_password_one);
   while (WiFi.status() != WL_CONNECTED)
   {
@@ -398,67 +403,39 @@ void WifiAutoConnect()
   {
     delay(50);
   }
-#endif
 }
 
 void handleRoot()
 {
-#if defined(TARGET_ESP8266)
-  File file = LittleFS.open("/index.xhtml", "r"); // read webpage from filesystem
+  File file = SD.open("/index.xhtml", "r"); // read webpage from filesystem
   server.streamFile(file, "application/xhtml");
   file.close();
-#endif
+
 }
 
 void handleJS()
 {
-#if defined(TARGET_ESP8266)
-  File file = LittleFS.open("pureknob.js", "r");
+  File file = SD.open("pureknob.js", "r");
   server.streamFile(file, "text/javascript");
   file.close();
-#endif
 }
 
 void handleFileList()
 {
-#if defined(TARGET_ESP8266)
-  String path = "/";
-  // Assuming there are no subdirectories
-  Dir dir = LittleFS.openDir(path);
-  String output = "[";
-  while (dir.next())
-  {
-    File entry = dir.openFile("r");
-    // Separate by comma if there are multiple files
-    if (output != "[")
-      output += ",";
-    output += String(entry.name()).substring(1);
-    entry.close();
-  }
-  output += "]";
-  server.send(200, "text/plain", output);
-#endif
+  return;
 }
-
 
 void getData()
 {
-  #ifdef TARGET_ESP8266
   String Vmin_json = "{\"vmin\":";
   Vmin_json += Vmin;
   Vmin_json += "}";
   webSocket.broadcastTXT(Vmin_json.c_str(), Vmin_json.length());
 
-  String Vmax_json = "{\"vmin\":";
-  Vmax_json += Vmin;
+  String Vmax_json = "{\"vmax\":";
+  Vmax_json += Vmax;
   Vmax_json += "}";
   webSocket.broadcastTXT(Vmax_json.c_str(), Vmax_json.length());
-  #endif
 }
 
-#ifdef TARGET_ESP8266
-void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
-{
-  // Do something with the data from the client
-}
-#endif
+
