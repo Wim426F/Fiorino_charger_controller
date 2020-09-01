@@ -1,4 +1,6 @@
 #include <Arduino.h>
+#include <elapsedMillis.h>
+#ifdef TARGET_ESP32
 #include <ArduinoOTA.h>
 #include <WiFi.h>
 #include <ESPmDNS.h>
@@ -10,23 +12,27 @@
 #include <SPI.h>
 #include <FS.h>
 #include <analogWrite.h>
+#include "esp32_bt_music_receiver.h"
+#endif
+
+byte buffer[50*1024];
 
 void WifiAutoConnect();
 void handleRoot();
 void handleJS();
 void handleFileList();
-void GetSerialData();
+bool GetSerialData();
 void ChargerControl();
 void EvseLocked();
 void getData();
 //void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length);
 
-unsigned long prev_millis_one = 0;
-unsigned long prev_millis_two = 0;
+elapsedMillis since_interval1 = 0;
+elapsedMillis since_interval2 = 0;
 unsigned long prev_millis_three = 0;
 const unsigned long charger_timeout = 18000000; // 5 hours
-const long delay_one = 30000;
-const long delay_two = 5000;
+const long interval1 = 2000;                    //1 minute
+const long interval2 = 2000;
 
 /* Data */
 String serial_str;
@@ -39,6 +45,7 @@ int temperature_idx = 0;
 int Vmin_idx = 0;
 int Vmax_idx = 0;
 int dissipated_nrg_idx = 0;
+uint8_t bms_state = 0; // 0:not charging   1:charging   2:charging ready
 
 float Vmin = 0;
 float Vmax = 0;
@@ -53,30 +60,45 @@ const float temperature_max = 40.0;
 const float temperature_dif_max = 10.0;
 const float Vmin_lim = 3.000;
 const float Vmax_lim_low = 4.000;
-const float Vmax_lim_med = 4.100;
 const float Vmax_lim_max = 4.200;
 const float dissipated_nrg_max = 2000.00;
-
 int rx_timeout;
 
 /* Triggers */
-boolean plug_locked = false;
-boolean evse_on = false;
-boolean voltage_lim = false;
-boolean bms_get_stat = true;
+bool plug_locked = false;
+bool evse_on = false;
+bool voltage_lim = false;
+bool bms_get_stat = true;
 
-
+#ifdef TARGET_TEENSY40
 /* Inputs */
-const byte evse_pin = D5;
-const byte charger_lim_pin = D6;
+const uint8_t evse_pin = 3;
+const uint8_t charger_lim_pin = 4;
 
 /* Outputs */
-const byte charger_pwm_pin = D0;
-const byte lock_plug_N = D1; // fet low side
-const byte lock_plug_P = D2; // fet high side
-const byte unlock_plug_N = D4;
-const byte unlock_plug_P = D3;
+const uint8_t charger_pwm_pin = 5;
+const uint8_t lock_plug_N = 9;  // fet low side
+const uint8_t lock_plug_P = 10; // fet high side
+const uint8_t unlock_plug_N = 11;
+const uint8_t unlock_plug_P = 12;
+#endif
 
+#ifdef TARGET_ESP32
+/* Inputs */
+#define Serial1 Serial
+const uint8_t evse_pin = D5;
+const uint8_t charger_lim_pin = D6;
+
+/* Outputs */
+const uint8_t charger_pwm_pin = D0;
+const uint8_t lock_plug_N = D1; // fet low side
+const uint8_t lock_plug_P = D2; // fet high side
+const uint8_t unlock_plug_N = D4;
+const uint8_t unlock_plug_P = D3;
+
+/* Bluetooth */
+BluetoothA2DSink a2d_sink;
+char *blde_name = "FIORINO_BT";
 
 /* Wifi */
 const char *sta_ssid_one = "Boone-Huis";
@@ -99,33 +121,61 @@ WebServer server(80);
 MDNSResponder mdns;
 WebSocketsServer webSocket = WebSocketsServer(81);
 
-void start_mdns_service()
+void bluetoothAudio()
 {
-    //initialize mDNS service
-    esp_err_t err = mdns_init();
-    if (err) {
-        printf("MDNS Init failed: %d\n", err);
-        return;
-    }
-    //set hostname
-    mdns_hostname_set("myfiorino");
-    //set default instance
-    mdns_instance_name_set("Fiorino");
+  static const i2s_config_t i2s_config = {
+      .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
+      .sample_rate = 44100,                         // corrected by info from bluetooth
+      .bits_per_sample = (i2s_bits_per_sample_t)16, /* the DAC module will only take the 8bits from MSB */
+      .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
+      .communication_format = I2S_COMM_FORMAT_I2S_MSB,
+      .intr_alloc_flags = 0, // default interrupt priority
+      .dma_buf_count = 8,
+      .dma_buf_len = 64,
+      .use_apll = false};
+
+  static const i2s_pin_config_t i2s_pin_config = {
+      .bck_io_num = 34,
+      .ws_io_num = 35,
+      .data_out_num = 33,
+      .data_in_num = I2S_PIN_NO_CHANGE};
+
+  a2d_sink.set_i2s_config(i2s_config);
+  //a2d_sink.set_pin_config(i2s_pin_config);
+  a2d_sink.start(blde_name);
+}
+
+void startMdnsService()
+{
+
+  //initialize mDNS service
+  esp_err_t err = mdns_init();
+  if (err)
+  {
+    printf("MDNS Init failed: %d\n", err);
+    return;
+  }
+  //set hostname
+  mdns_hostname_set("myfiorino");
+  //set default instance
+  mdns_instance_name_set("Fiorino");
 }
 
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
 {
   // Do something with the data from the client
 }
+#endif
 
 void setup()
 {
-  serial_str.reserve(5000);
+#ifdef TARGET_ESP32
   SD.begin(8);
   WiFi.mode(WIFI_AP_STA);
   WiFi.config(local_ip, gateway, subnet);
   WiFi.begin(sta_ssid_one, sta_password_one);
-
+  WiFi.softAPConfig(ap_ip, gateway, subnet);
+  WiFi.softAP(ap_ssid, ap_password, ssid_hidden, max_connection);
   while (WiFi.status() != WL_CONNECTED && wifi_timeout < 30)
   {
     delay(100);
@@ -136,16 +186,14 @@ void setup()
       break;
     }
   }
-  WiFi.softAPConfig(ap_ip, gateway, subnet);
-  WiFi.softAP(ap_ssid, ap_password, ssid_hidden, max_connection);
-
   // Over The Air update
   ArduinoOTA.setHostname(ota_hostname);
   ArduinoOTA.setPassword(ota_password);
   ArduinoOTA.begin();
 
   // Set up webserver
-  start_mdns_service();
+  startMdnsService();
+  bluetoothAudio();
   server.on("/", handleRoot);
   //server.addHandler(new handleJS("/pureknob.js"));
   server.on("/pureknob.js", handleJS);
@@ -156,31 +204,30 @@ void setup()
 
   analogWriteResolution(10);
   analogWriteFrequency(1000);
-  analogWrite(charger_pwm_pin, 30);
+  Serial.setRxBufferSize(4096);
+  Serial1.setRxBufferSize(4096);
+#endif
+#ifdef TEENSY_40
+  analogWriteFrequency(5, 1000);
+  analogWriteResolution(10);
+#endif
   Serial.begin(115200);
-  while (!Serial)
-  {
-    delay(10);
-  }
   Serial1.begin(115200);
-  while (!Serial)
-  {
-    delay(10);
-  }
+  serial_str.reserve(5000);
 
   pinMode(evse_pin, INPUT_PULLUP);
   pinMode(charger_lim_pin, INPUT_PULLUP);
-
   pinMode(charger_pwm_pin, OUTPUT);
   pinMode(lock_plug_N, OUTPUT);
   pinMode(lock_plug_P, OUTPUT);
   pinMode(unlock_plug_N, OUTPUT);
   pinMode(unlock_plug_P, OUTPUT);
-  delay(3000);
+  delay(500);
 }
 
 void loop()
 {
+#ifdef TARGET_ESP32
   ArduinoOTA.handle();
   server.handleClient();
   webSocket.loop();
@@ -190,53 +237,30 @@ void loop()
   {
     WifiAutoConnect();
   }
+#endif
 
-  unsigned long current_millis = millis();
   evse_on = digitalRead(evse_pin);
   //evse_on = !evse_on;
   voltage_lim = digitalRead(charger_lim_pin);
   voltage_lim = !voltage_lim;
 
-  if (current_millis - prev_millis_one >= delay_one)
+  if (since_interval1 > interval1)
   {
-    Serial1.println("t");
-    Serial.println("t");
-
-    while (Serial1.available() == 0 && rx_timeout <= 8)
-    {
-      rx_timeout++;
-      delay(1000);
-      Serial.println("waiting for incoming data");
-    }
-    if (rx_timeout >= 5)
-    {
-      Serial.println("No data received: timeout");
-      rx_timeout = 0;
-    }
-
-    while (Serial1.available() > 0)
-    {
-      delay(1); //delay to allow byte to arrive in input buffer
-      char c = Serial1.read();
-      serial_str += c;
-    }
-    if (serial_str.length() > 0)
-    {
-      GetSerialData();
-      Serial.println("BMS data received!");
-      ChargerControl();
-      serial_str = "";
-    }
-    prev_millis_one = current_millis;
+    since_interval1 = since_interval1 - interval1;
+    GetSerialData();
   }
 
-  if (current_millis - prev_millis_two >= delay_two)
+  if (GetSerialData() == true)
   {
-
-    //Serial.println(serial_str);
-    Serial.println((String) "Vmin: " + Vmin + "   Vmax: " + Vmax + "   Temp: " + temperature + "   PWM: " + charger_pwm_duty);
-    prev_millis_two = current_millis;
+    ChargerControl();
   }
+
+  if (since_interval2 > interval2)
+  {
+    since_interval2 = since_interval2 - interval2;
+    Serial.println((String) "Vmin: " + Vmin + "   Vmax: " + Vmax + "   PWM: " + charger_pwm_duty);
+  }
+  //analogWrite(charger_pwm_pin, charger_pwm_duty);
 
   if (plug_locked == false)
   {
@@ -249,24 +273,51 @@ void loop()
   }
 }
 
-void GetSerialData()
+bool GetSerialData()
 {
-  serial_str.replace(" ", "");
-  serial_str.replace("*", "");
-  serial_str.replace("N.C.", "");
+  serial_str = "";
+  Serial1.print('t');
+  Serial1.print('\r');
+  Serial.println("t");
 
-  if (bms_get_stat == true)
+  while (Serial1.available() == 0 && rx_timeout <= 15000)
   {
+    rx_timeout++;
+    delay(1);
+  }
+  if (rx_timeout >= 15000)
+  {
+    Serial.println("No data received: timeout");
+    rx_timeout = 0;
+  }
+  while (Serial1.available() > 0)
+  {
+    delay(1); //delay to allow byte to arrive in input buffer
+    serial_str += char(Serial1.read());
+  }
+  if (serial_str.length() > 0)
+  {
+    Serial.println("BMS data received!");
+    serial_str.replace(" ", "");
+    serial_str.replace("*", "");
+    serial_str.replace("N.C.", "");
+
+    if (serial_str.indexOf("Vmin") > -1 && serial_str.indexOf("Vmax") > -1)
+    {
+      bms_state = 0;
+      Vmin_idx = serial_str.indexOf("Vmin:") + 5;
+      Vmax_idx = serial_str.indexOf("Vmax:") + 5;
+    }
+
+    if (serial_str.indexOf("Shunt") > -1) // Shunt is similar to Vmax
+    {
+      bms_state = 1;
+      Vmin_idx = serial_str.indexOf("Vmed:") + 5;
+      Vmax_idx = serial_str.indexOf("Shunt:") + 6;
+    }
+
     temperature_idx = serial_str.indexOf("SOC") - 5; // find the location of certain strings
-    //data_string.remove(0, temperature_idx);
-    delay(5);
-    Vmin_idx = serial_str.indexOf("Vmin:") + 5;
-    Vmax_idx = serial_str.indexOf("Vmax:") + 5;
-
     temperature_str = serial_str.substring(temperature_idx, temperature_idx + 5);
-    Vmin_str = serial_str.substring(Vmin_idx, Vmin_idx + 5);
-    Vmax_str = serial_str.substring(Vmax_idx, Vmax_idx + 5);
-
     if (temperature_str.startsWith(String('-')))
     {
       temperature = temperature_str.toFloat();
@@ -274,25 +325,21 @@ void GetSerialData()
     else
     {
       temperature_str.remove(0, 1);
-      temperature_str.replace(String('S'), "");
       temperature = temperature_str.toFloat();
     }
 
+    Vmin_str = serial_str.substring(Vmin_idx, Vmin_idx + 5);
+    Vmax_str = serial_str.substring(Vmax_idx, Vmax_idx + 5);
     Vmin = Vmin_str.toFloat(); // convert string to float
     Vmax = Vmax_str.toFloat();
-    bms_get_stat = true;
   }
-  else // bms get balance current
+  if (bms_state > 1)
   {
-    int check_type = 0;
-    dissipated_nrg_idx = serial_str.indexOf("dissipata") + 10;
-    serial_str.remove(0, dissipated_nrg_idx);
-    for (check_type = 0; isDigit(serial_str.charAt(check_type) == true); check_type++)
-    {
-    }
-    dissipated_nrg_str = serial_str.substring(0, check_type);
-    dissipated_nrg = dissipated_nrg_str.toFloat();
-    bms_get_stat = true;
+    return false;
+  }
+  else
+  {
+    return true;
   }
 }
 
@@ -312,21 +359,16 @@ void ChargerControl()
     charger_pwm_duty = 915;
   }
 
-  if (Vmin >= Vmin_lim && Vmax > Vmax_lim_low && Vmax <= Vmax_lim_med && voltage_lim == true)
-  {
-    charger_pwm_duty = (Vmax_lim_med - Vmax) * 4096 + 150; // PWM is from 150 > 915 (15% > 90%)
-  }
-
-  if (Vmin >= Vmin_lim && Vmax >= Vmax_lim_low && Vmax <= Vmax_lim_max && voltage_lim == false)
+  if (Vmin >= Vmin_lim && Vmax >= Vmax_lim_low && Vmax <= Vmax_lim_max)
   {
     charger_pwm_duty = (Vmax_lim_max - Vmax) * 3800 + 150;
   }
 
-  if (Vmax > Vmax_lim_max || (Vmax > Vmax_lim_med && voltage_lim == true))
+  if (Vmax > Vmax_lim_max)
   {
     charger_pwm_duty = 0;
   }
-
+  /*
   if (temperature <= temperature_min)
   {
     if (temperature_min - temperature > temperature_dif_max)
@@ -350,7 +392,7 @@ void ChargerControl()
       charger_pwm_duty -= (temperature - temperature_max) * 10;
     }
   }
-
+  */
   if ((charger_pwm_duty > 0 && charger_pwm_duty < 100) || charger_pwm_duty < 0)
   {
     charger_pwm_duty = 0;
@@ -360,8 +402,6 @@ void ChargerControl()
   {
     charger_pwm_duty = 0;
   }
-
-  charger_speed = map(charger_pwm_duty, 100, 915, 0, 100);
 }
 
 void EvseLocked()
@@ -388,8 +428,11 @@ void EvseLocked()
   }
 }
 
+#ifdef TARGET_ESP32
+
 void WifiAutoConnect()
 {
+
   WiFi.begin(sta_ssid_one, sta_password_one);
   while (WiFi.status() != WL_CONNECTED)
   {
@@ -410,11 +453,11 @@ void handleRoot()
   File file = SD.open("/index.xhtml", "r"); // read webpage from filesystem
   server.streamFile(file, "application/xhtml");
   file.close();
-
 }
 
 void handleJS()
 {
+
   File file = SD.open("pureknob.js", "r");
   server.streamFile(file, "text/javascript");
   file.close();
@@ -438,4 +481,4 @@ void getData()
   webSocket.broadcastTXT(Vmax_json.c_str(), Vmax_json.length());
 }
 
-
+#endif
