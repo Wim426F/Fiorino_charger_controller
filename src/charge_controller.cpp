@@ -3,66 +3,61 @@
 #include <ArduinoOTA.h>
 #include <WiFi.h>
 #include <ESPmDNS.h>
-#include <WiFiClient.h>
-#include <WiFiUdp.h>
-#include <WebServer.h>
-#include <WebSocketsServer.h>
+#include <ESPAsyncWebServer.h>
+
+#include <AsyncTCP.h>
+#include <AsyncWebSocket.h>
+#include <AsyncJson.h>
 #include <SD.h>
 #include <SPI.h>
-#include <FS.h>
 #include <analogWrite.h>
 #include <elapsedMillis.h>
 //#include "esp32_bt_music_receiver.h"
 #endif
 
-byte buffer[50*1024];
+void StartMdnsService();
+void HandleRoot();
+void HandleJS();
+void SendServerData();
 
-void WifiAutoConnect();
-void handleRoot();
-void handleJS();
-void handleFileList();
 bool GetSerialData();
 void ChargerControl();
-void EvseLocked();
-void getData();
-//void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length);
+void EvseLock();
 
 elapsedMillis since_interval1 = 0;
 elapsedMillis since_interval2 = 0;
-unsigned long prev_millis_three = 0;
-const unsigned long charger_timeout = 18000000; // 5 hours
-const long interval1 = 2000;                    //1 minute
+const long interval1 = 2000;
 const long interval2 = 2000;
 
 /* Data */
 String serial_str;
-String temperature_str;
-String Vmin_str;
-String Vmax_str;
-String dissipated_nrg_str;
+String temp_str;
+String vmin_str;
+String vmax_str;
+String balcap_str;
 char bms_cmd = 't';
 
-int temperature_idx = 0;
-int Vmin_idx = 0;
-int Vmax_idx = 0;
-int dissipated_nrg_idx = 0;
+int temp_idx = 0;
+int vmin_idx = 0;
+int vmax_idx = 0;
+int balcap_idx = 0;
 uint8_t bms_state = 0; // 0:not charging   1:charging   2:charging ready
 
-float Vmin = 0;
-float Vmax = 0;
-float temperature = 0;
-float charger_pwm_duty = 0;
+float vmin = 0;
+float vmax = 0;
+float temp = 0;
+float balcap = 0;
+float charger_duty = 0;
 float charger_speed = 0;
-float dissipated_nrg = 0;
 
 /* Limits */
-const float temperature_min = 0.0;
-const float temperature_max = 40.0;
-const float temperature_dif_max = 10.0;
-const float Vmin_lim = 3.000;
-const float Vmax_lim_low = 4.000;
-const float Vmax_lim_max = 4.150;
-const float dissipated_nrg_max = 2000.00;
+const float temp_min = 0.0;
+const float temp_max = 40.0;
+const float tempdif_max = 10.0;
+const float vmin_lim = 3.000;
+const float vmax_lim_low = 4.000;
+const float vmax_lim_upp = 4.150;
+const float balcap_max = 2000.00;
 int rx_timeout;
 
 /* Triggers */
@@ -70,6 +65,27 @@ bool plug_locked = false;
 bool evse_on = false;
 bool voltage_lim = false;
 bool bms_get_stat = true;
+
+/* Wifi */
+const char *sta_ssid = "Boone-Huis";
+const char *sta_password = "b00n3meubelstof@";
+const char *ap_ssid = "Fiorino";
+const char *ap_password = "3VLS042020";
+const char *ota_hostname = "FIORINO_ESP32";
+const char *ota_password = "MaPe1!";
+const char *dns_hostname = "Fiorino";
+const char *dns_instance = "Fiorino";
+int ssid_hidden = 0;
+int max_connection = 3;
+int available_networks = 0;
+int wifi_timeout = 0;
+IPAddress local_ip(192, 168, 1, 173);
+IPAddress ap_ip(192, 168, 4, 22);
+IPAddress gateway(192, 168, 4, 9);
+IPAddress subnet(255, 255, 255, 0);
+MDNSResponder mdns;
+AsyncWebServer server(80);
+AsyncWebSocket ws("/ws");
 
 #ifdef TARGET_TEENSY40
 /* Inputs */
@@ -97,37 +113,18 @@ const uint8_t lock_plug_P = D2; // fet high side
 const uint8_t unlock_plug_N = D4;
 const uint8_t unlock_plug_P = D3;
 
-/* Bluetooth */
+/*
+// Bluetooth 
 BluetoothA2DSink a2d_sink;
 char *blde_name = "FIORINO_BT";
 
-/* Wifi */
-const char *sta_ssid_one = "Boone-Huis";
-const char *sta_password_one = "b00n3meubelstof@";
-const char *sta_ssid_two = "BooneZaak";
-const char *sta_password_two = "B00n3meubelstof@";
-const char *ap_ssid = "Fiorino";
-const char *ap_password = "3VLS042020";
-const char *ota_hostname = "FIORINO_ESP8266";
-const char *ota_password = "MaPe1!";
-int ssid_hidden = 0;
-int max_connection = 3;
-int available_networks = 0;
-int wifi_timeout = 0;
-IPAddress local_ip(192, 168, 1, 173);
-IPAddress ap_ip(192, 168, 4, 22);
-IPAddress gateway(192, 168, 4, 9);
-IPAddress subnet(255, 255, 255, 0);
-WebServer server(80);
-MDNSResponder mdns;
-WebSocketsServer webSocket = WebSocketsServer(81);
-
-void bluetoothAudio()
+void BluetoothAudio()
 {
+  
   static const i2s_config_t i2s_config = {
       .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
       .sample_rate = 44100,                         // corrected by info from bluetooth
-      .bits_per_sample = (i2s_bits_per_sample_t)16, /* the DAC module will only take the 8bits from MSB */
+      .bits_per_sample = (i2s_bits_per_sample_t)16, // the DAC module will only take the 8bits from MSB 
       .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
       .communication_format = I2S_COMM_FORMAT_I2S_MSB,
       .intr_alloc_flags = 0, // default interrupt priority
@@ -140,41 +137,30 @@ void bluetoothAudio()
       .ws_io_num = 35,
       .data_out_num = 33,
       .data_in_num = I2S_PIN_NO_CHANGE};
-
+  
   a2d_sink.set_i2s_config(i2s_config);
   //a2d_sink.set_pin_config(i2s_pin_config);
   a2d_sink.start(blde_name);
 }
-
-void startMdnsService()
-{
-
-  //initialize mDNS service
-  esp_err_t err = mdns_init();
-  if (err)
-  {
-    printf("MDNS Init failed: %d\n", err);
-    return;
-  }
-  //set hostname
-  mdns_hostname_set("myfiorino");
-  //set default instance
-  mdns_instance_name_set("Fiorino");
-}
-
-void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
-{
-  // Do something with the data from the client
-}
+*/
 #endif
 
 void setup()
 {
 #ifdef TARGET_ESP32
-  SD.begin(8);
+  Serial.begin(115200);
+  Serial1.begin(115200);
+  serial_str.reserve(5000);
+  SPI.begin(D5, D6, D7, D8);
+  SD.begin(D8, SPI ,40000000);
+  if(SD.begin() == 1)
+  {
+    Serial.println("SD card found!");
+  }
+
   WiFi.mode(WIFI_AP_STA);
   WiFi.config(local_ip, gateway, subnet);
-  WiFi.begin(sta_ssid_one, sta_password_one);
+  WiFi.begin(sta_ssid, sta_password);
   WiFi.softAPConfig(ap_ip, gateway, subnet);
   WiFi.softAP(ap_ssid, ap_password, ssid_hidden, max_connection);
   while (WiFi.status() != WL_CONNECTED && wifi_timeout < 30)
@@ -187,21 +173,25 @@ void setup()
       break;
     }
   }
+  Serial.println(WiFi.localIP());
   // Over The Air update
   ArduinoOTA.setHostname(ota_hostname);
   ArduinoOTA.setPassword(ota_password);
   ArduinoOTA.begin();
-
-  // Set up webserver
-  startMdnsService();
+  StartMdnsService();
   //bluetoothAudio();
-  server.on("/", handleRoot);
-  //server.addHandler(new handleJS("/pureknob.js"));
-  server.on("/pureknob.js", handleJS);
-  server.on("/list", handleFileList);
+
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+    File page = SD.open("/index.html", "r"); // read file from filesystem
+    request->send(page, "/index.html", "text/html");
+    //page.close();
+  });
+  server.on("/pureknob.js", HTTP_GET, [](AsyncWebServerRequest *request) {
+    File page = SD.open("/pureknob.js", "r");
+    request->send(page, "/pureknob.js", "text/javascript");
+    //page.close();
+  });
   server.begin();
-  webSocket.begin();
-  webSocket.onEvent(webSocketEvent);
 
   analogWriteResolution(10);
   analogWriteFrequency(1000);
@@ -212,9 +202,6 @@ void setup()
   analogWriteFrequency(5, 1000);
   analogWriteResolution(10);
 #endif
-  Serial.begin(115200);
-  Serial1.begin(115200);
-  serial_str.reserve(5000);
 
   pinMode(evse_pin, INPUT_PULLUP);
   pinMode(charger_lim_pin, INPUT_PULLUP);
@@ -230,14 +217,15 @@ void loop()
 {
 #ifdef TARGET_ESP32
   ArduinoOTA.handle();
-  server.handleClient();
-  webSocket.loop();
-
-  available_networks = WiFi.scanNetworks(sta_ssid_one, sta_ssid_two);
-  if (WiFi.status() != WL_CONNECTED && available_networks > 0)
+  if (WiFi.status() != WL_CONNECTED)
   {
-    WifiAutoConnect();
+    available_networks = WiFi.scanNetworks(sta_ssid, sta_ssid);
+    if (available_networks == 1)
+    {
+      WiFi.begin(sta_ssid, sta_password);
+    }
   }
+
 #endif
 
   evse_on = digitalRead(evse_pin);
@@ -245,7 +233,7 @@ void loop()
   voltage_lim = digitalRead(charger_lim_pin);
   voltage_lim = !voltage_lim;
 
-  if (since_interval1 > interval1)
+  /*if (since_interval1 > interval1)
   {
     since_interval1 = since_interval1 - interval1;
     GetSerialData();
@@ -259,7 +247,7 @@ void loop()
   if (since_interval2 > interval2)
   {
     since_interval2 = since_interval2 - interval2;
-    Serial.println((String) "Vmin: " + Vmin + "   Vmax: " + Vmax + "   PWM: " + charger_pwm_duty);
+    Serial.println((String) "vmin: " + vmin + "   vmax: " + vmax + "   PWM: " + charger_duty);
   }
 
   if (Serial.available() > 0)
@@ -270,18 +258,18 @@ void loop()
       Serial.println(serial_str);
       delay(100);
     }
+    
   }
-  
-  //analogWrite(charger_pwm_pin, charger_pwm_duty);
+  */
 
   if (plug_locked == false)
   {
-    EvseLocked();
+    EvseLock();
   }
 
   if (evse_on == true)
   {
-    analogWrite(charger_pwm_pin, charger_pwm_duty);
+    analogWrite(charger_pwm_pin, charger_duty);
   }
 }
 
@@ -315,36 +303,36 @@ bool GetSerialData()
     serial_str.replace("*", "");
     serial_str.replace("N.C.", "");
 
-    if (serial_str.indexOf("Vmin") > -1 && serial_str.indexOf("Vmax") > -1)
+    if (serial_str.indexOf("vmin") > -1 && serial_str.indexOf("vmax") > -1)
     {
       bms_state = 0;
-      Vmin_idx = serial_str.indexOf("Vmin:") + 5;
-      Vmax_idx = serial_str.indexOf("Vmax:") + 5;
+      vmin_idx = serial_str.indexOf("vmin:") + 5;
+      vmax_idx = serial_str.indexOf("vmax:") + 5;
     }
 
-    if (serial_str.indexOf("Shunt") > -1) // Shunt is similar to Vmax
+    if (serial_str.indexOf("Shunt") > -1) // Shunt is similar to vmax
     {
       bms_state = 1;
-      Vmin_idx = serial_str.indexOf("Vmed:") + 5;
-      Vmax_idx = serial_str.indexOf("Shunt:") + 6;
+      vmin_idx = serial_str.indexOf("Vmed:") + 5;
+      vmax_idx = serial_str.indexOf("Shunt:") + 6;
     }
 
-    temperature_idx = serial_str.indexOf("SOC") - 5; // find the location of certain strings
-    temperature_str = serial_str.substring(temperature_idx, temperature_idx + 5);
-    if (temperature_str.startsWith(String('-')))
+    temp_idx = serial_str.indexOf("SOC") - 5; // find the location of certain strings
+    temp_str = serial_str.substring(temp_idx, temp_idx + 5);
+    if (temp_str.startsWith(String('-')))
     {
-      temperature = temperature_str.toFloat();
+      temp = temp_str.toFloat();
     }
     else
     {
-      temperature_str.remove(0, 1);
-      temperature = temperature_str.toFloat();
+      temp_str.remove(0, 1);
+      temp = temp_str.toFloat();
     }
 
-    Vmin_str = serial_str.substring(Vmin_idx, Vmin_idx + 5);
-    Vmax_str = serial_str.substring(Vmax_idx, Vmax_idx + 5);
-    Vmin = Vmin_str.toFloat(); // convert string to float
-    Vmax = Vmax_str.toFloat();
+    vmin_str = serial_str.substring(vmin_idx, vmin_idx + 5);
+    vmax_str = serial_str.substring(vmax_idx, vmax_idx + 5);
+    vmin = vmin_str.toFloat(); // convert string to float
+    vmax = vmax_str.toFloat();
   }
   if (bms_state > 1)
   {
@@ -358,66 +346,66 @@ bool GetSerialData()
 
 void ChargerControl()
 {
-  if (Vmin < Vmin_lim)
+  if (vmin < vmin_lim)
   {
-    charger_pwm_duty = 915 - (Vmin_lim - Vmin) * 1000 - 100;
-    if (charger_pwm_duty < 150)
+    charger_duty = 915 - (vmin_lim - vmin) * 1000 - 100;
+    if (charger_duty < 150)
     {
-      charger_pwm_duty = 150;
+      charger_duty = 150;
     }
   }
 
-  if (Vmin >= Vmin_lim && Vmax <= Vmax_lim_low)
+  if (vmin >= vmin_lim && vmax <= vmax_lim_low)
   {
-    charger_pwm_duty = 915;
+    charger_duty = 915;
   }
 
-  if (Vmin >= Vmin_lim && Vmax >= Vmax_lim_low && Vmax <= Vmax_lim_max)
+  if (vmin >= vmin_lim && vmax >= vmax_lim_low && vmax <= vmax_lim_upp)
   {
-    charger_pwm_duty = (Vmax_lim_max - Vmax) * 3800 + 150;
+    charger_duty = (vmax_lim_upp - vmax) * 3800 + 150;
   }
 
-  if (Vmax > Vmax_lim_max)
+  if (vmax > vmax_lim_upp)
   {
-    charger_pwm_duty = 0;
+    charger_duty = 0;
   }
   /*
-  if (temperature <= temperature_min)
+  if (temp <= temp_min)
   {
-    if (temperature_min - temperature > temperature_dif_max)
+    if (temp_min - temp > tempdif_max)
     {
-      charger_pwm_duty = 0;
+      charger_duty = 0;
     }
     else
     {
-      charger_pwm_duty -= (temperature_min - temperature) * 10; // subtract the temp difference times 10
+      charger_duty -= (temp_min - temp) * 10; // subtract the temp difference times 10
     }
   }
 
-  if (temperature >= temperature_max) // check if temperature is outside of preferred range but still within max deviation
+  if (temp >= temp_max) // check if temp is outside of preferred range but still within max deviation
   {
-    if (temperature - temperature_max > temperature_dif_max)
+    if (temp - temp_max > tempdif_max)
     {
-      charger_pwm_duty = 0;
+      charger_duty = 0;
     }
     else
     {
-      charger_pwm_duty -= (temperature - temperature_max) * 10;
+      charger_duty -= (temp - temp_max) * 10;
     }
   }
   */
-  if ((charger_pwm_duty > 0 && charger_pwm_duty < 100) || charger_pwm_duty < 0)
+  if ((charger_duty > 0 && charger_duty < 100) || charger_duty < 0)
   {
-    charger_pwm_duty = 0;
+    charger_duty = 0;
   }
 
-  if (dissipated_nrg > dissipated_nrg_max)
+  if (balcap > balcap_max)
   {
-    charger_pwm_duty = 0;
+    charger_duty = 0;
   }
 }
 
-void EvseLocked()
+void EvseLock()
 {
   if (evse_on == true && plug_locked == false) // if the evse is plugged in and not latched
   {
@@ -443,55 +431,23 @@ void EvseLocked()
 
 #ifdef TARGET_ESP32
 
-void WifiAutoConnect()
-{
-
-  WiFi.begin(sta_ssid_one, sta_password_one);
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    delay(50);
-  }
-  if (WiFi.status() == WL_NO_SSID_AVAIL || WiFi.status() == WL_CONNECT_FAILED)
-  {
-    WiFi.begin(sta_ssid_two, sta_password_two);
-  }
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    delay(50);
-  }
-}
-
-void handleRoot()
-{
-  File file = SD.open("/index.xhtml", "r"); // read webpage from filesystem
-  server.streamFile(file, "application/xhtml");
-  file.close();
-}
-
-void handleJS()
-{
-
-  File file = SD.open("pureknob.js", "r");
-  server.streamFile(file, "text/javascript");
-  file.close();
-}
-
-void handleFileList()
-{
-  return;
-}
-
-void getData()
+void SendServerData()
 {
   String Vmin_json = "{\"vmin\":";
-  Vmin_json += Vmin;
+  Vmin_json += vmin;
   Vmin_json += "}";
-  webSocket.broadcastTXT(Vmin_json.c_str(), Vmin_json.length());
 
   String Vmax_json = "{\"vmax\":";
-  Vmax_json += Vmax;
+  Vmax_json += vmax;
   Vmax_json += "}";
-  webSocket.broadcastTXT(Vmax_json.c_str(), Vmax_json.length());
+}
+
+void StartMdnsService()
+{
+  //set hostname
+  mdns_hostname_set(dns_hostname);
+  //set default instance
+  mdns_instance_name_set(dns_instance);
 }
 
 #endif
