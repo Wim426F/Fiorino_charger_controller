@@ -73,8 +73,7 @@ const char *ap_ssid = "Fiorino";
 const char *ap_password = "3VLS042020";
 const char *ota_hostname = "FIORINO_ESP32";
 const char *ota_password = "MaPe1!";
-const char *dns_hostname = "Fiorino";
-const char *dns_instance = "Fiorino";
+const char *dns_hostname = "fiorino";
 int ssid_hidden = 0;
 int max_connection = 3;
 int available_networks = 0;
@@ -152,8 +151,8 @@ void setup()
   Serial1.begin(115200);
   serial_str.reserve(5000);
   SPI.begin(D5, D6, D7, D8);
-  SD.begin(D8, SPI ,40000000);
-  if(SD.begin() == 1)
+  SD.begin(D8, SPI, 40000000);
+  if (SD.begin() == 1)
   {
     Serial.println("SD card found!");
   }
@@ -217,6 +216,7 @@ void loop()
 {
 #ifdef TARGET_ESP32
   ArduinoOTA.handle();
+  ArduinoOTA.
   if (WiFi.status() != WL_CONNECTED)
   {
     available_networks = WiFi.scanNetworks(sta_ssid, sta_ssid);
@@ -445,9 +445,11 @@ void SendServerData()
 void StartMdnsService()
 {
   //set hostname
-  mdns_hostname_set(dns_hostname);
-  //set default instance
-  mdns_instance_name_set(dns_instance);
+  if (!MDNS.begin(dns_hostname))
+  {
+    Serial.println("Error setting up MDNS responder!");
+  }
+  MDNS.addService("http", "tcp", 80);
 }
 
 #endif
