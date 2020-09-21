@@ -4,11 +4,12 @@
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <ESPAsyncWebServer.h>
-
+#include <Update.h>
 #include <AsyncTCP.h>
 #include <AsyncWebSocket.h>
 #include <AsyncJson.h>
 #include <SD.h>
+#include <FS.h>
 #include <SPI.h>
 #include <analogWrite.h>
 #include <elapsedMillis.h>
@@ -16,10 +17,9 @@
 #endif
 
 void StartMdnsService();
-void HandleRoot();
-void HandleJS();
-void SendServerData();
-
+void StartWebServer();
+void handleUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final);
+void SendSocketData();
 bool GetSerialData();
 void ChargerControl();
 void EvseLock();
@@ -31,13 +31,13 @@ const long interval2 = 2000;
 
 /* Data */
 String serial_str;
-String temp_str;
+String celltemp_str;
 String vmin_str;
 String vmax_str;
 String balcap_str;
 char bms_cmd = 't';
 
-int temp_idx = 0;
+int celltemp_idx = 0;
 int vmin_idx = 0;
 int vmax_idx = 0;
 int balcap_idx = 0;
@@ -45,14 +45,14 @@ uint8_t bms_state = 0; // 0:not charging   1:charging   2:charging ready
 
 float vmin = 0;
 float vmax = 0;
-float temp = 0;
+float celltemp = 0;
 float balcap = 0;
 float charger_duty = 0;
 float charger_speed = 0;
 
 /* Limits */
-const float temp_min = 0.0;
-const float temp_max = 40.0;
+const float celltemp_min = 0.0;
+const float celltemp_max = 40.0;
 const float tempdif_max = 10.0;
 const float vmin_lim = 3.000;
 const float vmax_lim_low = 4.000;
@@ -62,6 +62,7 @@ int rx_timeout;
 
 /* Triggers */
 bool plug_locked = false;
+bool endofcharge = false;
 bool evse_on = false;
 bool voltage_lim = false;
 bool bms_get_stat = true;
@@ -151,7 +152,7 @@ void setup()
   Serial1.begin(115200);
   serial_str.reserve(5000);
   SPI.begin(D5, D6, D7, D8);
-  SD.begin(D8, SPI, 40000000);
+  SD.begin(D8, SPI, 80000000);
   if (SD.begin() == 1)
   {
     Serial.println("SD card found!");
@@ -162,15 +163,20 @@ void setup()
   WiFi.begin(sta_ssid, sta_password);
   WiFi.softAPConfig(ap_ip, gateway, subnet);
   WiFi.softAP(ap_ssid, ap_password, ssid_hidden, max_connection);
-  while (WiFi.status() != WL_CONNECTED && wifi_timeout < 30)
+  while (WiFi.status() != WL_CONNECTED && wifi_timeout < 40)
   {
     delay(100);
     wifi_timeout++;
     if (wifi_timeout >= 10)
     {
       wifi_timeout = 0;
+      Serial.println("WiFi connection not established!");
       break;
     }
+  }
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    Serial.println("Wifi connected to: " + (String)sta_ssid);
   }
   Serial.println(WiFi.localIP());
   // Over The Air update
@@ -178,19 +184,24 @@ void setup()
   ArduinoOTA.setPassword(ota_password);
   ArduinoOTA.begin();
   StartMdnsService();
-  //bluetoothAudio();
+  StartWebServer();
+  esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_SLOW_MEM, ESP_PD_OPTION_AUTO);
+  esp_sleep_enable_uart_wakeup(0);
+  esp_sleep_enable_uart_wakeup(1);
+  //BluetoothAudio();
 
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-    File page = SD.open("/index.html", "r"); // read file from filesystem
-    request->send(page, "/index.html", "text/html");
-    //page.close();
-  });
-  server.on("/pureknob.js", HTTP_GET, [](AsyncWebServerRequest *request) {
-    File page = SD.open("/pureknob.js", "r");
-    request->send(page, "/pureknob.js", "text/javascript");
-    //page.close();
-  });
-  server.begin();
+  uint32_t usage = 100-((ESP.getFreeSketchSpace() * 100) / ESP.getFlashChipSize());
+  Serial.println("Total Flash: " + (String)ESP.getFlashChipSize());
+  Serial.println("Free Flash: " + (String)ESP.getFreeSketchSpace());
+  Serial.println("Flash speed: " + (String)ESP.getFlashChipSpeed());
+  Serial.println("Flash mode: " + (String)ESP.getFlashChipMode());
+  Serial.println("Total RAM: " + (String)ESP.getPsramSize());
+  Serial.println("Free RAM: " + (String)ESP.getFreePsram());
+  Serial.println("Total Heap: " + (String)ESP.getHeapSize());
+  Serial.println("Free Heap: " + (String)ESP.getFreeHeap());
+  Serial.println("Sketch size usage (%): " + (String)usage);
+  Serial.println("CPU clock (MHz): " + (String)ESP.getCpuFreqMHz());
+  Serial.println("if this message gets printed then OTA via webserver is a succes");
 
   analogWriteResolution(10);
   analogWriteFrequency(1000);
@@ -210,13 +221,13 @@ void setup()
   pinMode(unlock_plug_N, OUTPUT);
   pinMode(unlock_plug_P, OUTPUT);
   delay(500);
+
 }
 
 void loop()
 {
 #ifdef TARGET_ESP32
   ArduinoOTA.handle();
-  ArduinoOTA.
   if (WiFi.status() != WL_CONNECTED)
   {
     available_networks = WiFi.scanNetworks(sta_ssid, sta_ssid);
@@ -261,6 +272,13 @@ void loop()
     
   }
   */
+ // if charging is finished put esp32 in light sleep
+  if (vmax > 4.10 && GetSerialData() == false)
+    {
+      charger_duty = 0;
+      endofcharge = true;
+      esp_light_sleep_start();
+    }
 
   if (plug_locked == false)
   {
@@ -317,16 +335,16 @@ bool GetSerialData()
       vmax_idx = serial_str.indexOf("Shunt:") + 6;
     }
 
-    temp_idx = serial_str.indexOf("SOC") - 5; // find the location of certain strings
-    temp_str = serial_str.substring(temp_idx, temp_idx + 5);
-    if (temp_str.startsWith(String('-')))
+    celltemp_idx = serial_str.indexOf("SOC") - 5; // find the location of certain strings
+    celltemp_str = serial_str.substring(celltemp_idx, celltemp_idx + 5);
+    if (celltemp_str.startsWith(String('-')))
     {
-      temp = temp_str.toFloat();
+      celltemp = celltemp_str.toFloat();
     }
     else
     {
-      temp_str.remove(0, 1);
-      temp = temp_str.toFloat();
+      celltemp_str.remove(0, 1);
+      celltemp = celltemp_str.toFloat();
     }
 
     vmin_str = serial_str.substring(vmin_idx, vmin_idx + 5);
@@ -370,27 +388,27 @@ void ChargerControl()
     charger_duty = 0;
   }
   /*
-  if (temp <= temp_min)
+  if (temp <= celltemp_min)
   {
-    if (temp_min - temp > tempdif_max)
+    if (celltemp_min - temp > tempdif_max)
     {
       charger_duty = 0;
     }
     else
     {
-      charger_duty -= (temp_min - temp) * 10; // subtract the temp difference times 10
+      charger_duty -= (celltemp_min - temp) * 10; // subtract the temp difference times 10
     }
   }
 
-  if (temp >= temp_max) // check if temp is outside of preferred range but still within max deviation
+  if (temp >= celltemp_max) // check if temp is outside of preferred range but still within max deviation
   {
-    if (temp - temp_max > tempdif_max)
+    if (temp - celltemp_max > tempdif_max)
     {
       charger_duty = 0;
     }
     else
     {
-      charger_duty -= (temp - temp_max) * 10;
+      charger_duty -= (temp - celltemp_max) * 10;
     }
   }
   */
@@ -403,6 +421,7 @@ void ChargerControl()
   {
     charger_duty = 0;
   }
+
 }
 
 void EvseLock()
@@ -431,17 +450,6 @@ void EvseLock()
 
 #ifdef TARGET_ESP32
 
-void SendServerData()
-{
-  String Vmin_json = "{\"vmin\":";
-  Vmin_json += vmin;
-  Vmin_json += "}";
-
-  String Vmax_json = "{\"vmax\":";
-  Vmax_json += vmax;
-  Vmax_json += "}";
-}
-
 void StartMdnsService()
 {
   //set hostname
@@ -450,6 +458,98 @@ void StartMdnsService()
     Serial.println("Error setting up MDNS responder!");
   }
   MDNS.addService("http", "tcp", 80);
+}
+
+void SendSocketData()
+{
+  String vmin_json = "{\"vmin\":";
+  vmin_json += vmin;
+  vmin_json += "}";
+
+  String vmax_json = "{\"vmax\":";
+  vmax_json += vmax;
+  vmax_json += "}";
+
+  String chrgrspeed_json = "{\"charger_speed\":";
+  chrgrspeed_json += charger_speed;
+  chrgrspeed_json += "}";
+
+  String celltemp_json = "{\"celltemp\":";
+  celltemp_json += celltemp;
+  celltemp_json += "}";
+}
+
+void StartWebServer()
+{
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+    File page = SD.open("/html/index.html", "r"); // read file from filesystem
+    request->send(page, "/index.html", "text/html");
+  });
+  server.on("/update", HTTP_GET, [](AsyncWebServerRequest *request) {
+    File page = SD.open("/html/update.html", "r"); // read file from filesystem
+    request->send(page, "/update.html", "text/html");
+  });
+  server.on("/parameters.html", HTTP_GET, [](AsyncWebServerRequest *request) {
+    File page = SD.open("/html/parameters.html", "r");
+    request->send(page, "/parameters.html", "text/html");
+  });
+  server.on("/datalog.html", HTTP_GET, [](AsyncWebServerRequest *request) {
+    File page = SD.open("/html/data.html", "r");
+    request->send(page, "/datalog.html", "text/html");
+  });
+  server.on("/style.css", HTTP_GET, [](AsyncWebServerRequest *request) {
+    File page = SD.open("/css/style.css", "r");
+    request->send(page, "/style.css", "text/css");
+  });
+  server.on("/pureknob.js", HTTP_GET, [](AsyncWebServerRequest *request) {
+    File page = SD.open("/js/pureknob.js", "r");
+    request->send(page, "/pureknob.js", "text/javascript");
+  });
+  server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request) {
+    File page = SD.open("/etc/favicon.ico", "r");
+    request->send(page, "/favicon.ico", "image/vnd.microsoft.icon");
+  });
+  server.on("/upload_file", HTTP_POST, [](AsyncWebServerRequest *request){
+        request->send(200);
+    }, handleUpload);   
+    server.begin();  
+  server.begin();
+}
+
+void handleUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final){
+    //Handle upload 
+        Serial.println("----UPLOAD-----"); 
+        Serial.print("FILENAME: ");
+        Serial.println(filename);
+        Serial.print("INDEX: ");
+        Serial.println(index);
+        Serial.print("LENGTH: ");
+        Serial.println(len);   
+        AsyncWebHeader *header = request->getHeader("X-File-Size");
+        Serial.print("File size: ");
+        Serial.println((size_t)header->value().toFloat());
+        if (!Update.isRunning())
+        {
+            Serial.print("Status Update.begin(): ");
+            Serial.println(Update.begin((size_t)header->value().toFloat()));
+            Serial.print("Update remaining: ");
+            Serial.println(Update.remaining());
+        }
+        else
+        {
+            Serial.println("Status Update.begin(): RUNNING");
+        }       
+
+    Serial.print("FLASH BYTES: ");
+    Serial.println(Update.write(data, len));       
+        Serial1.print("Update remaining: ");
+    Serial.println(Update.remaining());
+
+    if (final)
+    {
+        Update.end();
+        Serial1.print("----FINAL-----");
+    }   
 }
 
 #endif
