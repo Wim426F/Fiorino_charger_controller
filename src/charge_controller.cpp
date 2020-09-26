@@ -4,7 +4,7 @@
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <ESPAsyncWebServer.h>
-#include <Update.h>
+//#include <Update.h>
 #include <AsyncTCP.h>
 #include <AsyncWebSocket.h>
 #include <AsyncJson.h>
@@ -19,15 +19,18 @@
 void StartMdnsService();
 void StartWebServer();
 void handleUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final);
+//void handleUploadWebpage(AsyncWebServerRequest *request, const String &filename, size_t index, uint8_t *data, size_t len, bool final);
+void handleUploadWebpage(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final);
+void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
 void SendSocketData();
 bool GetSerialData();
 void ChargerControl();
 void EvseLock();
 
-elapsedMillis since_interval1 = 0;
-elapsedMillis since_interval2 = 0;
-const long interval1 = 2000;
-const long interval2 = 2000;
+elapsedMillis since_int1 = 0;
+elapsedMillis since_int2 = 0;
+const long int1 = 30000;
+const long int2 = 1000;
 
 /* Data */
 String serial_str;
@@ -75,6 +78,8 @@ const char *ap_password = "3VLS042020";
 const char *ota_hostname = "FIORINO_ESP32";
 const char *ota_password = "MaPe1!";
 const char *dns_hostname = "fiorino";
+const char *http_username = "wim";
+const char *http_password = "w1mb00n3";
 int ssid_hidden = 0;
 int max_connection = 3;
 int available_networks = 0;
@@ -86,6 +91,7 @@ IPAddress subnet(255, 255, 255, 0);
 MDNSResponder mdns;
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
+AsyncWebSocketClient *globalClient = NULL;
 
 #ifdef TARGET_TEENSY40
 /* Inputs */
@@ -190,7 +196,7 @@ void setup()
   esp_sleep_enable_uart_wakeup(1);
   //BluetoothAudio();
 
-  uint32_t usage = 100-((ESP.getFreeSketchSpace() * 100) / ESP.getFlashChipSize());
+  uint32_t usage = 100 - ((ESP.getFreeSketchSpace() * 100) / ESP.getFlashChipSize());
   Serial.println("Total Flash: " + (String)ESP.getFlashChipSize());
   Serial.println("Free Flash: " + (String)ESP.getFreeSketchSpace());
   Serial.println("Flash speed: " + (String)ESP.getFlashChipSpeed());
@@ -201,7 +207,6 @@ void setup()
   Serial.println("Free Heap: " + (String)ESP.getFreeHeap());
   Serial.println("Sketch size usage (%): " + (String)usage);
   Serial.println("CPU clock (MHz): " + (String)ESP.getCpuFreqMHz());
-  Serial.println("if this message gets printed then OTA via webserver is a succes");
 
   analogWriteResolution(10);
   analogWriteFrequency(1000);
@@ -221,7 +226,6 @@ void setup()
   pinMode(unlock_plug_N, OUTPUT);
   pinMode(unlock_plug_P, OUTPUT);
   delay(500);
-
 }
 
 void loop()
@@ -237,6 +241,11 @@ void loop()
     }
   }
 
+  if (!SD.exists("/html"))
+  {
+    SD.begin(D8, SPI, 80000000);
+  }
+
 #endif
 
   evse_on = digitalRead(evse_pin);
@@ -244,9 +253,9 @@ void loop()
   voltage_lim = digitalRead(charger_lim_pin);
   voltage_lim = !voltage_lim;
 
-  /*if (since_interval1 > interval1)
+  /*if (since_int1 > int1)
   {
-    since_interval1 = since_interval1 - interval1;
+    since_int1 = since_int1 - int1;
     GetSerialData();
   }
 
@@ -254,11 +263,22 @@ void loop()
   {
     ChargerControl();
   }
-
-  if (since_interval2 > interval2)
+  */
+  if (since_int2 > int2)
   {
-    since_interval2 = since_interval2 - interval2;
+    since_int2 = since_int2 - int2;
     Serial.println((String) "vmin: " + vmin + "   vmax: " + vmax + "   PWM: " + charger_duty);
+
+    if (globalClient != NULL && globalClient->status() == WS_CONNECTED)
+    {
+      //String getVmin = "hi!";
+      //globalClient->text(getVmin);
+      Serial.println("send succesfull?");
+    }
+    else
+    {
+      Serial.println("failed");
+    }
   }
 
   if (Serial.available() > 0)
@@ -269,16 +289,15 @@ void loop()
       Serial.println(serial_str);
       delay(100);
     }
-    
   }
-  */
- // if charging is finished put esp32 in light sleep
+
+  // if charging is finished put esp32 in light sleep
   if (vmax > 4.10 && GetSerialData() == false)
-    {
-      charger_duty = 0;
-      endofcharge = true;
-      esp_light_sleep_start();
-    }
+  {
+    charger_duty = 0;
+    endofcharge = true;
+    esp_light_sleep_start();
+  }
 
   if (plug_locked == false)
   {
@@ -311,7 +330,7 @@ bool GetSerialData()
   }
   while (Serial1.available() > 0)
   {
-    delayMicroseconds(10); //delay to allow byte to arrive in input buffer
+    delayMicroseconds(2); //delay to allow byte to arrive in input buffer
     serial_str += char(Serial1.read());
   }
   if (serial_str.length() > 0)
@@ -421,7 +440,6 @@ void ChargerControl()
   {
     charger_duty = 0;
   }
-
 }
 
 void EvseLock()
@@ -481,21 +499,25 @@ void SendSocketData()
 
 void StartWebServer()
 {
+  ws.onEvent(onWsEvent);
+  server.addHandler(&ws);
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
     File page = SD.open("/html/index.html", "r"); // read file from filesystem
     request->send(page, "/index.html", "text/html");
   });
-  server.on("/update", HTTP_GET, [](AsyncWebServerRequest *request) {
-    File page = SD.open("/html/update.html", "r"); // read file from filesystem
-    request->send(page, "/update.html", "text/html");
-  });
-  server.on("/parameters.html", HTTP_GET, [](AsyncWebServerRequest *request) {
+  server
+      .on("/update", HTTP_GET, [](AsyncWebServerRequest *request) {
+        File page = SD.open("/html/update.html", "r"); // read file from filesystem
+        request->send(page, "/update", "text/html");
+      })
+      .setAuthentication(http_username, http_password);
+  server.on("/parameters", HTTP_GET, [](AsyncWebServerRequest *request) {
     File page = SD.open("/html/parameters.html", "r");
     request->send(page, "/parameters.html", "text/html");
   });
-  server.on("/datalog.html", HTTP_GET, [](AsyncWebServerRequest *request) {
-    File page = SD.open("/html/data.html", "r");
-    request->send(page, "/datalog.html", "text/html");
+  server.on("/datalog", HTTP_GET, [](AsyncWebServerRequest *request) {
+    File page = SD.open("/html/datalog.html", "r");
+    request->send(page, "/datalog", "text/html");
   });
   server.on("/style.css", HTTP_GET, [](AsyncWebServerRequest *request) {
     File page = SD.open("/css/style.css", "r");
@@ -509,47 +531,117 @@ void StartWebServer()
     File page = SD.open("/etc/favicon.ico", "r");
     request->send(page, "/favicon.ico", "image/vnd.microsoft.icon");
   });
-  server.on("/upload_file", HTTP_POST, [](AsyncWebServerRequest *request){
+  server.on(
+            "/update/#0", HTTP_POST, [](AsyncWebServerRequest *request) {
+              request->send(200);
+            },handleUpload);
+  server.on(
+      "/update/#1", HTTP_POST, [](AsyncWebServerRequest *request) {
         request->send(200);
-    }, handleUpload);   
-    server.begin();  
+      },
+      handleUploadWebpage);
   server.begin();
 }
 
-void handleUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final){
-    //Handle upload 
-        Serial.println("----UPLOAD-----"); 
-        Serial.print("FILENAME: ");
-        Serial.println(filename);
-        Serial.print("INDEX: ");
-        Serial.println(index);
-        Serial.print("LENGTH: ");
-        Serial.println(len);   
-        AsyncWebHeader *header = request->getHeader("X-File-Size");
-        Serial.print("File size: ");
-        Serial.println((size_t)header->value().toFloat());
-        if (!Update.isRunning())
-        {
-            Serial.print("Status Update.begin(): ");
-            Serial.println(Update.begin((size_t)header->value().toFloat()));
-            Serial.print("Update remaining: ");
-            Serial.println(Update.remaining());
-        }
-        else
-        {
-            Serial.println("Status Update.begin(): RUNNING");
-        }       
+void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len)
+{
+  if (type == WS_EVT_CONNECT)
+  {
+    Serial.println("WebSocket Client connected!");
+  }
+  else if (type == WS_EVT_DISCONNECT)
+  {
+    Serial.println("Websocket Client disconnected!");
+  }
 
-    Serial.print("FLASH BYTES: ");
-    Serial.println(Update.write(data, len));       
-        Serial1.print("Update remaining: ");
+  if (since_int2 > int2)
+  {
+    since_int2 = since_int2 - int2;
+    if (globalClient != NULL && globalClient->status() == WS_CONNECTED)
+    {
+      uint8_t getVmin = globalClient->status();
+
+      Serial.println(getVmin);
+    }
+    else
+    {
+      Serial.println("failed");
+    }
+  }
+}
+
+void handleUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final)
+{
+  //Handle upload
+  Serial.println("----UPLOAD-----");
+  Serial.print("FILENAME: ");
+  Serial.println(filename);
+  Serial.print("INDEX: ");
+  Serial.println(index);
+  Serial.print("LENGTH: ");
+  Serial.println(len);
+  AsyncWebHeader *header = request->getHeader("X-File-Size");
+  Serial.print("File size: ");
+  Serial.println((size_t)header->value().toFloat());
+  if (!Update.isRunning())
+  {
+    Serial.print("Status Update.begin(): ");
+    Serial.println(Update.begin((size_t)header->value().toFloat()));
+    Serial.print("Update remaining: ");
     Serial.println(Update.remaining());
+  }
+  else
+  {
+    Serial.println("Status Update.begin(): RUNNING");
+  }
+  Serial.print("FLASH BYTES: ");
+  Serial.println(Update.write(data, len));
+  Serial.print("Update remaining: ");
+  Serial.println(Update.remaining());
 
+  if (final)
+  {
+    Update.end();
+    Serial.print("----FINAL-----");
+  }
+}
+/*
+void handleUploadWebpage(AsyncWebServerRequest *request, const String &filename, size_t index, uint8_t *data, size_t len, bool final)
+{
+  if (!index)
+  {
+    request->_tempFile = SD.open(filename, "w");
+  }
+  if (request->_tempFile)
+  {
+    if (len)
+    {
+      request->_tempFile.write(data, len);
+    }
     if (final)
     {
-        Update.end();
-        Serial1.print("----FINAL-----");
-    }   
+      request->_tempFile.close();
+    }
+  }
+  File page = SD.open("/html/update.html", "r"); // read file from filesystem
+  request->send(page, "/update", "text/html");
+}
+*/
+void handleUploadWebpage(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final)
+{
+  Serial.println("starting upload!");
+  if (!index)
+  {
+    Serial.println(filename);
+  }
+  for (size_t i = 0; i < len; i++)
+  {
+    Serial.write(data[i]);
+  }
+  if (final)
+  {
+    Serial.printf("UploadEnd: %s, %u B\n", filename.c_str(), index + len);
+  }
 }
 
 #endif
