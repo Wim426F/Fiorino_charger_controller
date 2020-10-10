@@ -14,7 +14,6 @@
 #include <analogWrite.h>
 #include <elapsedMillis.h>
 //#include "esp32_bt_music_receiver.h"
-#endif
 
 void StartMdnsService();
 void StartWebServer();
@@ -23,9 +22,10 @@ void handleUpload(AsyncWebServerRequest *request, String filename, size_t index,
 void handleUploadWebpage(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final);
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
 void SendSocketData();
+#endif
 bool GetSerialData();
 void ChargerControl();
-void EvseLock();
+void LockEvse(bool lock_evse);
 
 elapsedMillis since_int1 = 0;
 elapsedMillis since_int2 = 0;
@@ -64,12 +64,12 @@ const float balcap_max = 2000.00;
 int rx_timeout;
 
 /* Triggers */
-bool plug_locked = false;
 bool endofcharge = false;
 bool evse_on = false;
 bool voltage_lim = false;
 bool bms_get_stat = true;
 
+#ifdef TARGET_ESP32
 /* Wifi */
 const char *sta_ssid = "Boone-Huis";
 const char *sta_password = "b00n3meubelstof@";
@@ -93,20 +93,8 @@ AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 AsyncWebSocketClient *globalClient = NULL;
 
-#ifdef TARGET_TEENSY40
-/* Inputs */
-const uint8_t evse_pin = 3;
-const uint8_t charger_lim_pin = 4;
 
-/* Outputs */
-const uint8_t charger_pwm_pin = 5;
-const uint8_t lock_plug_N = 9;  // fet low side
-const uint8_t lock_plug_P = 10; // fet high side
-const uint8_t unlock_plug_N = 11;
-const uint8_t unlock_plug_P = 12;
-#endif
 
-#ifdef TARGET_ESP32
 /* Inputs */
 #define Serial1 Serial
 const uint8_t evse_pin = D5;
@@ -149,6 +137,19 @@ void BluetoothAudio()
   a2d_sink.start(blde_name);
 }
 */
+#endif
+
+#ifdef TARGET_TEENSY40
+/* Inputs */
+const uint8_t evse_pin = 3;
+const uint8_t charger_lim_pin = 4;
+
+/* Outputs */
+const uint8_t charger_pwm_pin = 5;
+const uint8_t lock_plug_N = 9;  // fet low side
+const uint8_t lock_plug_P = 10; // fet high side
+const uint8_t unlock_plug_N = 11;
+const uint8_t unlock_plug_P = 12;
 #endif
 
 void setup()
@@ -240,7 +241,6 @@ void loop()
       WiFi.begin(sta_ssid, sta_password);
     }
   }
-
   if (!SD.exists("/html"))
   {
     SD.begin(D8, SPI, 80000000);
@@ -252,8 +252,8 @@ void loop()
   //evse_on = !evse_on;
   voltage_lim = digitalRead(charger_lim_pin);
   voltage_lim = !voltage_lim;
-
-  /*if (since_int1 > int1)
+/*
+  if (since_int1 > int1)
   {
     since_int1 = since_int1 - int1;
     GetSerialData();
@@ -262,23 +262,19 @@ void loop()
   if (GetSerialData() == true)
   {
     ChargerControl();
-  }
-  */
+  }*/
+  
   if (since_int2 > int2)
   {
     since_int2 = since_int2 - int2;
     Serial.println((String) "vmin: " + vmin + "   vmax: " + vmax + "   PWM: " + charger_duty);
-
-    if (globalClient != NULL && globalClient->status() == WS_CONNECTED)
-    {
-      //String getVmin = "hi!";
-      //globalClient->text(getVmin);
-      Serial.println("send succesfull?");
-    }
-    else
-    {
-      Serial.println("failed");
-    }
+    /*
+    File logfile = SD.open("/log/logfile.txt");
+    logfile.println(" ");
+    logfile.println("--------------------");
+    logfile.println(" ");
+    logfile.close();
+    */
   }
 
   if (Serial.available() > 0)
@@ -291,22 +287,22 @@ void loop()
     }
   }
 
-  // if charging is finished put esp32 in light sleep
+  // if charging has finished put esp32 in light sleep
   if (vmax > 4.10 && GetSerialData() == false)
   {
     charger_duty = 0;
     endofcharge = true;
-    esp_light_sleep_start();
-  }
-
-  if (plug_locked == false)
-  {
-    EvseLock();
+    //esp_light_sleep_start();
   }
 
   if (evse_on == true)
   {
     analogWrite(charger_pwm_pin, charger_duty);
+    LockEvse(true);
+  }
+  else
+  {
+    LockEvse(false);
   }
 }
 
@@ -370,6 +366,17 @@ bool GetSerialData()
     vmax_str = serial_str.substring(vmax_idx, vmax_idx + 5);
     vmin = vmin_str.toFloat(); // convert string to float
     vmax = vmax_str.toFloat();
+    if (vmax > vmax_lim_low)
+    {
+    /*
+    File logfile = SD.open("/log/logfile.txt");
+    logfile.println(" ");
+    logfile.println("--------------------");
+    logfile.println(" ");
+    logfile.println(serial_str);
+    logfile.close();
+    */
+    }
   }
   if (bms_state > 1)
   {
@@ -442,9 +449,9 @@ void ChargerControl()
   }
 }
 
-void EvseLock()
+void LockEvse(bool)
 {
-  if (evse_on == true && plug_locked == false) // if the evse is plugged in and not latched
+  if (true)
   {
     analogWrite(unlock_plug_P, 255); // switch P fet unlock off
     analogWrite(unlock_plug_N, 0);   // switch N fet unlock off
@@ -452,17 +459,14 @@ void EvseLock()
     analogWrite(lock_plug_P, 0);     // switch P fet lock on
     analogWrite(lock_plug_N, 255);   // switch N fet lock on
     delayMicroseconds(1);
-    plug_locked = true;
   }
-
-  if (evse_on == false && plug_locked == true) // if the evse is stopped
+  if (false)
   {
     analogWrite(lock_plug_P, 255);   // turn P fet lock off
     analogWrite(lock_plug_N, 0);     // turn N fet lock off
     delayMicroseconds(1);            // wait for fet delay & fall time
     analogWrite(unlock_plug_P, 0);   // turn P fet unlock on
     analogWrite(unlock_plug_N, 255); // turn N fet unlock on
-    plug_locked = false;
   }
 }
 
@@ -497,13 +501,26 @@ void SendSocketData()
   celltemp_json += "}";
 }
 
+String processor(const String &var)
+{
+  //Serial.println(var);
+  if (var == "BUTTONPLACEHOLDER")
+  {
+    String buttons = "";
+    String outputStateValue = "hello";
+    buttons += "<label class=\"switch\"><input type=\"checkbox\" onchange=\"toggleCheckbox(this)\" id=\"output\" " + outputStateValue + "><span class=\"slider\"></span></label>";
+    return buttons;
+  }
+  return String();
+}
+
 void StartWebServer()
 {
   ws.onEvent(onWsEvent);
   server.addHandler(&ws);
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
     File page = SD.open("/html/index.html", "r"); // read file from filesystem
-    request->send(page, "/index.html", "text/html");
+    request->send(page, "/index.html", "text/html", false, processor);
   });
   server
       .on("/update", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -517,24 +534,35 @@ void StartWebServer()
   });
   server.on("/datalog", HTTP_GET, [](AsyncWebServerRequest *request) {
     File page = SD.open("/html/datalog.html", "r");
-    request->send(page, "/datalog", "text/html");
+    request->send(page, "/datalog", "text/html", false);
+  });
+  server.on("/logfile", HTTP_GET, [](AsyncWebServerRequest *request) {
+    File page = SD.open("/log/logfile.txt", "r");
+    request->send(page, "/logfile", "text/plain", false);
+  });
+  server.on("/test", HTTP_GET, [](AsyncWebServerRequest *request) {
+    File page = SD.open("/html/test.html", "r");
+    request->send(page, "/test", "text/html", false, processor);
   });
   server.on("/style.css", HTTP_GET, [](AsyncWebServerRequest *request) {
     File page = SD.open("/css/style.css", "r");
     request->send(page, "/style.css", "text/css");
   });
+  //server.serveStatic("/favicon.ico", SD, "/etc/favicon.ico");
   server.on("/pureknob.js", HTTP_GET, [](AsyncWebServerRequest *request) {
     File page = SD.open("/js/pureknob.js", "r");
     request->send(page, "/pureknob.js", "text/javascript");
   });
+
   server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request) {
     File page = SD.open("/etc/favicon.ico", "r");
     request->send(page, "/favicon.ico", "image/vnd.microsoft.icon");
   });
   server.on(
-            "/update/#0", HTTP_POST, [](AsyncWebServerRequest *request) {
-              request->send(200);
-            },handleUpload);
+      "/update/#0", HTTP_POST, [](AsyncWebServerRequest *request) {
+        request->send(200);
+      },
+      handleUpload);
   server.on(
       "/update/#1", HTTP_POST, [](AsyncWebServerRequest *request) {
         request->send(200);
