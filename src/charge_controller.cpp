@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 #include <Arduino.h>
 #ifdef TARGET_ESP32
 #include <ArduinoOTA.h>
@@ -672,3 +671,5 @@ void handleUploadWebpage(AsyncWebServerRequest *request, String filename, size_t
     Serial.printf("UploadEnd: %s, %u B\n", filename.c_str(), index + len);
   }
 }
+
+#endif
