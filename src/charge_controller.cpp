@@ -8,9 +8,10 @@
 #include <SD.h>
 #include <SPI.h>
 #include <elapsedMillis.h>
-#include <string.h>
+#include <string>
 //#include "esp32_bt_music_receiver.h"
 
+void task_core0(void *pvParameters);
 void StartMdnsService();
 void StartWebServer();
 void handleUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final);
@@ -32,32 +33,25 @@ int counter;
 
 /* Variables */
 String serial_str;
-String celltemp_str;
-String vmin_str;
-String vmax_str;
-String balcap_str;
+String status_str;
 
-int celltemp_idx = 0;
-int vmin_idx = 0;
-int vmax_idx = 0;
-int balcap_idx = 0;
-int bms_state = 0; // 0:not charging   1:charging   2:charging ready
-
+float celltemp = 0;
+float stateofcharge = 0;
+float lemsensor = 0;
 float vmin = 0;
 float vmax = 0;
-float celltemp = 0;
-float balcap = 0;
+float dissipated_energy = 0;
+float status = 0;
 float charger_duty = 0;
-float charger_speed = 0;
 
 /* Limits */
 const float celltemp_min = 0.0;
 const float celltemp_max = 40.0;
-const float tempdif_max = 10.0;
+const float celltemp_hyst_max = 10.0;
 const float vmin_lim = 3.000;
 const float vmax_lim_low = 4.000;
 const float vmax_lim_upp = 4.150;
-const float balcap_max = 2000.00;
+const float dissipated_energy_max = 2000.00;
 
 /* Triggers */
 bool endofcharge = false;
@@ -91,6 +85,8 @@ int available_networks = 0;
 int wifi_timeout = 0;
 
 typedef int32_t esp_err_t;
+typedef int uart_port_t;
+#define Serial1 Serial
 
 /* GPIO */
 #define chargerlim_pin GPIO_NUM_36
@@ -103,8 +99,8 @@ typedef int32_t esp_err_t;
 
 /* PWM channels */
 const uint8_t chargerpwm_ch = 1;
-const uint8_t lock_low = 2; 
-const uint8_t lock_high = 3; 
+const uint8_t lock_low = 2;
+const uint8_t lock_high = 3;
 const uint8_t unlock_low = 4;
 const uint8_t unlock_high = 5;
 
@@ -140,6 +136,8 @@ void BluetoothAudio()
 
 void setup()
 {
+  //xTaskCreatePinnedToCore(task_core0, "task_core0", 10000, NULL, 1, NULL, 0);
+  //delay(500);
   Serial.begin(115200);
   Serial1.setRxBufferSize(4096);
   Serial1.begin(115200, SERIAL_8N1, RX1, TX1);
@@ -170,16 +168,25 @@ void setup()
   esp_err_t gpio_set_pull_mode(gpio_num_t EVSE, gpio_pull_mode_t GPIO_PULLDOWN_ONLY);
   esp_err_t gpio_set_pull_mode(gpio_num_t chargerlim_pin, gpio_pull_mode_t GPIO_PULLDOWN_ONLY);
   ledcSetup(chargerpwm_ch, 1000, 10); // channel, freq, res
-  ledcSetup(lock_high, 1000, 8);      
-  ledcSetup(lock_low, 1000, 8);      
-  ledcSetup(unlock_high, 1000, 8);    
-  ledcSetup(unlock_low, 1000, 8);    
+  ledcSetup(lock_high, 1000, 8);
+  ledcSetup(lock_low, 1000, 8);
+  ledcSetup(unlock_high, 1000, 8);
+  ledcSetup(unlock_low, 1000, 8);
   ledcAttachPin(GPIO_NUM_26, chargerpwm_ch);
   ledcAttachPin(GPIO_NUM_21, lock_high);
   ledcAttachPin(GPIO_NUM_22, lock_low);
   ledcAttachPin(GPIO_NUM_16, unlock_high);
   ledcAttachPin(GPIO_NUM_17, unlock_low);
 }
+/*
+void task_core0(void *pvParameters)
+{
+  Serial.print("Task2 running on core ");
+  Serial.println(xPortGetCoreID());
+  for (;;)
+  {
+  }
+} */
 
 void loop()
 {
@@ -214,13 +221,21 @@ void loop()
   if (since_int1 > int1)
   {
     since_int1 = since_int1 - int1;
-    GetSerialData("t");  
+    Serial.println("getting data");
+    if (GetSerialData("t") == "Succes")
+    {
+      ControlCharger();
+    }
+    else
+    {
+      if (vmax > 4.15)
+      {
+        charger_duty = 0;
+        endofcharge = true;
+        esp_light_sleep_start();
+      }
+    }
   }
-
-  if (GetSerialData() == "Succes")
-  {
-    ControlCharger();
-  } 
 
   if (since_int2 > int2)
   {
@@ -228,13 +243,6 @@ void loop()
     Serial.println((String) "vmin: " + vmin + "   vmax: " + vmax + "   PWM: " + charger_duty);
   }
 
-  // if charging has finished put esp32 in light sleep
-  if (vmax > 4.20 && GetSerialData() == "Failed")
-  {
-    charger_duty = 0;
-    endofcharge = true;
-    esp_light_sleep_start();
-  }
   if (evse_on == true)
   {
     LockEvse(true);
@@ -248,90 +256,103 @@ void loop()
 String GetSerialData(String input)
 {
   File logfile = SD.open("/log/logfile.txt", FILE_APPEND);
+  esp_err_t uart_flush_input(uart_port_t UART_NUM_1);
+  int celltemp_idx = 0;
+  int stateofcharge_idx = 0;
+  int lemsensor_idx = 0;
+  int vmin_idx = 0;
+  int vmax_idx = 0;
+  int dissipated_energy_idx = 0;
+  //int status_idx = 0;
   serial_str = "";
+  serial_str.clear();
+  
   if (input.length() < 2)
   {
     input += "\r";
     Serial1.print(input);
     Serial.print(input);
   }
-  while (!Serial1.available() && rx_timeout <= 10000)
+  while (!Serial1.available() && rx_timeout <= 10)
   {
     rx_timeout++;
-    delay(1);
+    delay(1000);
+    Serial.print(".");
   }
-  if (rx_timeout > 10000)
+  if (rx_timeout > 10)
   {
-    Serial.println("No data received: timeout");
     rx_timeout = 0;
-    logfile.println("-------------------------");
-    logfile.println("No data received: timeout");
-    logfile.println("-------------------------");
-  }
-  while (Serial1.available() > 0)
-  {
-    delayMicroseconds(1);
-    serial_str += char(Serial1.read());
-  }
-  if (serial_str.length() > 50)
-  {
-    Serial.println("BMS data received!");
-    Serial.println(serial_str);
-    serial_str.replace(" ", "");
-    serial_str.replace("*", "");
-    serial_str.replace("N.C.", "");
-
-    if (serial_str.indexOf("vmin") > -1 && serial_str.indexOf("vmax") > -1)
-    {
-      bms_state = 0;
-      vmin_idx = serial_str.indexOf("vmin:") + 5;
-      vmax_idx = serial_str.indexOf("vmax:") + 5;
-    }
-
-    if (serial_str.indexOf("Shunt") > -1) // Shunt is similar to vmax
-    {
-      bms_state = 1;
-      vmin_idx = serial_str.indexOf("Vmed:") + 5;
-      vmax_idx = serial_str.indexOf("Shunt:") + 6;
-    }
-
-    celltemp_idx = serial_str.indexOf("SOC") - 5; // find the location of certain strings
-    celltemp_str = serial_str.substring(celltemp_idx, celltemp_idx + 5);
-    if (celltemp_str.startsWith(String('-')))
-    {
-      celltemp = celltemp_str.toFloat();
-    }
-    else
-    {
-      celltemp_str.remove(0, 1);
-      celltemp = celltemp_str.toFloat();
-    }
-
-    vmin_str = serial_str.substring(vmin_idx, vmin_idx + 5);
-    vmax_str = serial_str.substring(vmax_idx, vmax_idx + 5);
-    vmin = vmin_str.toFloat(); // convert string to float
-    vmax = vmax_str.toFloat();
-    logfile.println((String) "vmin: " + vmin + "   vmax: " + vmax + "   PWM: " + charger_duty);
-    logfile.close();
-  } else
-  {
-    Serial.println("Serial data corrupt");
-    Serial.println(serial_str);
-  }
-  
-  if (bms_state > 1)
-  {
-    return "Failed";
+    Serial.println("No data received: timeout");
+    logfile.println("\nNo data received: timeout");
   }
   else
   {
+    Serial.println("BMS data received!");
+  }
+  while (Serial1.available())
+  {
+    serial_str += char(Serial1.read());
+  }
+  //Serial.println(serial_str);
+  if (input.startsWith("t"))
+  {
+    serial_str.replace(" ", "");
+    serial_str.replace("*", "");
+    serial_str.replace("N.C.", "");
+    Serial.println(serial_str);
+    stateofcharge_idx = serial_str.indexOf("SOC") + 4;
+    stateofcharge = serial_str.substring(stateofcharge_idx, stateofcharge_idx + 5).toFloat();
+    lemsensor_idx = serial_str.indexOf("LEM") + 4;
+    lemsensor = serial_str.substring(lemsensor_idx, lemsensor_idx + 6).toFloat();
+    celltemp_idx = serial_str.indexOf("SOC") - 9;
+    if (serial_str.substring(celltemp_idx, celltemp_idx + 5).startsWith("-"))
+    {
+      celltemp = serial_str.substring(celltemp_idx, celltemp_idx + 5).toFloat();
+    }
+    else
+    {
+      celltemp = serial_str.substring(celltemp_idx + 1, celltemp_idx + 5).toFloat();
+    }
+    if (serial_str.indexOf("Vmin") > -1 && serial_str.indexOf("Vmax") > -1)
+    {
+      vmin_idx = serial_str.indexOf("Vmin:") + 5;
+      vmax_idx = serial_str.indexOf("Vmax:") + 5;
+    }
+    if (serial_str.indexOf("Shunt") > -1) // Shunt is similar to vmax
+    {
+      vmin_idx = serial_str.indexOf("Vmed:") + 5;
+      vmax_idx = serial_str.indexOf("Shunt:") + 6;
+    }
+    vmin = serial_str.substring(vmin_idx, vmin_idx + 5).toFloat();
+    vmax = serial_str.substring(vmax_idx, vmax_idx + 5).toFloat();
+    Serial.print("vmin ");
+    Serial.println(vmin);
+    Serial.print("vmin ");
+    Serial.println(vmax);
+    Serial.print("temp ");
+    Serial.println(celltemp);
+    Serial.print("stateofcharge ");
+    Serial.println(stateofcharge);
+    Serial.print("lemsensor ");
+    Serial.println(lemsensor);
     return "Succes";
   }
+
+  if (input == "d")
+  {
+    serial_str.replace(" ", "");
+    dissipated_energy_idx = serial_str.indexOf("dissipata") + 9;
+    dissipated_energy = serial_str.substring(dissipated_energy_idx, dissipated_energy_idx + 6).toFloat();
+    return "Succes";
+  }
+  logfile.println((String) "Vmin: " + vmin + "   Vmax: " + vmax + "   PWM: " + charger_duty + "   Temperature: " + celltemp + "   SOC: " + stateofcharge + "   LEM: " + lemsensor);
+  logfile.close();
+  return "Succes";
 }
 
 void ControlCharger()
 {
-  if (vmin < vmin_lim)
+  if (vmin < vmin_lim && vmin > 0)
   {
     charger_duty = 910 - (vmin_lim - vmin) * 1000 - 150;
     if (charger_duty < 100)
@@ -357,7 +378,7 @@ void ControlCharger()
   /*
   if (temp <= celltemp_min)
   {
-    if (celltemp_min - temp > tempdif_max)
+    if (celltemp_min - temp > celltemp_hyst_max)
     {
       charger_duty = 0;
     }
@@ -369,7 +390,7 @@ void ControlCharger()
 
   if (temp >= celltemp_max) // check if temp is outside of preferred range but still within max deviation
   {
-    if (temp - celltemp_max > tempdif_max)
+    if (temp - celltemp_max > celltemp_hyst_max)
     {
       charger_duty = 0;
     }
@@ -383,7 +404,7 @@ void ControlCharger()
   {
     charger_duty = 0;
   }
-  if (balcap > balcap_max)
+  if (dissipated_energy > dissipated_energy_max)
   {
     charger_duty = 0;
   }
@@ -395,18 +416,18 @@ void LockEvse(bool)
   if (true)
   {
     ledcWrite(unlock_high, 200); // switch P fet unlock off
-    ledcWrite(unlock_low, 0);   // switch N fet unlock off
-    delayMicroseconds(1);          // wait for fet delay & fall time
+    ledcWrite(unlock_low, 0);    // switch N fet unlock off
+    delayMicroseconds(1);        // wait for fet delay & fall time
     ledcWrite(lock_high, 0);     // switch P fet lock on
-    ledcWrite(lock_low, 200);   // switch N fet lock on
+    ledcWrite(lock_low, 200);    // switch N fet lock on
     delayMicroseconds(1);
   }
   if (false)
   {
-    ledcWrite(lock_high, 200);   // turn P fet lock off
+    ledcWrite(lock_high, 200);  // turn P fet lock off
     ledcWrite(lock_low, 0);     // turn N fet lock off
-    delayMicroseconds(1);          // wait for fet delay & fall time
-    ledcWrite(unlock_high, 0);   // turn P fet unlock on
+    delayMicroseconds(1);       // wait for fet delay & fall time
+    ledcWrite(unlock_high, 0);  // turn P fet unlock on
     ledcWrite(unlock_low, 200); // turn N fet unlock on
   }
 }
@@ -430,10 +451,6 @@ void SendSocketData()
   String vmax_json = "{\"vmax\":";
   vmax_json += vmax;
   vmax_json += "}";
-
-  String chrgrspeed_json = "{\"charger_speed\":";
-  chrgrspeed_json += charger_speed;
-  chrgrspeed_json += "}";
 
   String celltemp_json = "{\"celltemp\":";
   celltemp_json += celltemp;
@@ -466,7 +483,7 @@ String processor(const String &var)
 }
 
 void StartWebServer()
-{ 
+{
   ws.onEvent(onWsEvent);
   server.addHandler(&ws);
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
