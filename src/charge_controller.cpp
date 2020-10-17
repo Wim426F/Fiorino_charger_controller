@@ -163,8 +163,8 @@ void setup()
   //BluetoothAudio();
 
   esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_SLOW_MEM, ESP_PD_OPTION_AUTO);
-  esp_sleep_enable_uart_wakeup(0);
-  esp_sleep_enable_uart_wakeup(1);
+  esp_err_t esp_sleep_enable_uart_wakeup(0);
+  esp_err_t esp_sleep_enable_uart_wakeup(1);
   esp_err_t gpio_set_pull_mode(gpio_num_t EVSE, gpio_pull_mode_t GPIO_PULLDOWN_ONLY);
   esp_err_t gpio_set_pull_mode(gpio_num_t chargerlim_pin, gpio_pull_mode_t GPIO_PULLDOWN_ONLY);
   ledcSetup(chargerpwm_ch, 1000, 10); // channel, freq, res
