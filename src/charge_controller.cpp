@@ -23,6 +23,8 @@ String GetSerialData(String input = "");
 void ControlCharger();
 void LockEvse(bool lock_evse);
 
+File logfile;
+
 /* Timers */
 elapsedMillis since_int1 = 0;
 elapsedMillis since_int2 = 0;
@@ -87,7 +89,6 @@ int wifi_timeout = 0;
 
 typedef int32_t esp_err_t;
 typedef int uart_port_t;
-#define Serial1 Serial
 
 /* GPIO */
 #define chargerlim_pin GPIO_NUM_36
@@ -137,13 +138,11 @@ void BluetoothAudio()
 
 void setup()
 {
-  //xTaskCreatePinnedToCore(task_core0, "task_core0", 10000, NULL, 1, NULL, 0);
-  //delay(500);
   Serial.begin(115200);
   Serial1.begin(115200, SERIAL_8N1, RX1, TX1);
   Serial1.setRxBufferSize(4096);
   serial_str.reserve(3500);
-  SD.begin(SS, SPI, 40000000, "/sd", 20);
+  SD.begin(SS, SPI, 80000000, "/sd", 20);
   WiFi.mode(WIFI_AP_STA);
   WiFi.config(local_ip, gateway, subnet);
   WiFi.begin(sta_ssid, sta_password);
@@ -178,15 +177,6 @@ void setup()
   ledcAttachPin(GPIO_NUM_16, unlock_high);
   ledcAttachPin(GPIO_NUM_17, unlock_low);
 }
-/*
-void task_core0(void *pvParameters)
-{
-  Serial.print("Task2 running on core ");
-  Serial.println(xPortGetCoreID());
-  for (;;)
-  {
-  }
-} */
 
 void loop()
 {
@@ -199,11 +189,11 @@ void loop()
       WiFi.begin(sta_ssid, sta_password);
     }
   }
-  /*if (!SD.exists("/html/index.html"))
+  if (!SD.exists("/html/index.html"))
   {
     Serial.println("SD card removed!");
     SD.end();
-    SD.begin(5, SPI, 80000000);
+    SD.begin(SS, SPI, 80000000, "/sd", 20);
     delay(500);
     if (SD.exists("/html/index.html"))
     {
@@ -213,7 +203,7 @@ void loop()
     {
       Serial.println("Failed to reinitialize SD card");
     }
-  } */
+  } 
   evse_on = gpio_get_level(EVSE);
   evse_on = !evse_on;
   soclim = gpio_get_level(chargerlim_pin);
@@ -242,7 +232,7 @@ void loop()
     since_int2 = since_int2 - int2;
     Serial.println((String) "vmin: " + vmin + "   vmax: " + vmax + "   PWM: " + charger_duty);
   }
-
+  /*
   if (evse_on == true)
   {
     LockEvse(true);
@@ -250,13 +240,20 @@ void loop()
   else
   {
     LockEvse(false);
-  }
+  } */
 }
 
 String GetSerialData(String input)
 {
-  File logfile = SD.open("/log/logfile.txt", FILE_APPEND);
-  esp_err_t uart_flush_input(uart_port_t UART_NUM_1);
+  if (!SD.exists("/log/logfile.txt"))
+  {
+    logfile = SD.open("/log/logfile.txt", FILE_WRITE);
+  }
+  else
+  {
+    logfile = SD.open("/log/logfile.txt", FILE_APPEND);
+  }
+  
   int celltemp_idx = 0;
   int stateofcharge_idx = 0;
   int lemsensor_idx = 0;
@@ -280,10 +277,10 @@ String GetSerialData(String input)
     Serial1.println(input);
     Serial.println(input);
   }
-  while (!Serial1.available() && rx_timeout <= 1000)
+  while (!Serial1.available() && rx_timeout <= 300)
   {
     rx_timeout++;
-    delay(10);
+    delay(100);
     Serial.print(".");
   }
   if (rx_timeout > 1000)
