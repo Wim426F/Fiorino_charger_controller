@@ -34,6 +34,7 @@ int counter;
 /* Variables */
 String serial_str;
 String status_str;
+String output;
 
 float celltemp = 0;
 float stateofcharge = 0;
@@ -139,11 +140,10 @@ void setup()
   //xTaskCreatePinnedToCore(task_core0, "task_core0", 10000, NULL, 1, NULL, 0);
   //delay(500);
   Serial.begin(115200);
-  Serial1.setRxBufferSize(4096);
   Serial1.begin(115200, SERIAL_8N1, RX1, TX1);
-  serial_str.reserve(4096);
-  SPI.begin(18, 19, 23, 5);
-  SD.begin(GPIO_NUM_5, SPI, 80000000);
+  Serial1.setRxBufferSize(4096);
+  serial_str.reserve(3500);
+  SD.begin(SS, SPI, 40000000, "/sd", 20);
   WiFi.mode(WIFI_AP_STA);
   WiFi.config(local_ip, gateway, subnet);
   WiFi.begin(sta_ssid, sta_password);
@@ -163,8 +163,8 @@ void setup()
   //BluetoothAudio();
 
   esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_SLOW_MEM, ESP_PD_OPTION_AUTO);
-  esp_err_t esp_sleep_enable_uart_wakeup(0);
-  esp_err_t esp_sleep_enable_uart_wakeup(1);
+  esp_sleep_enable_uart_wakeup(0);
+  esp_sleep_enable_uart_wakeup(1);
   esp_err_t gpio_set_pull_mode(gpio_num_t EVSE, gpio_pull_mode_t GPIO_PULLDOWN_ONLY);
   esp_err_t gpio_set_pull_mode(gpio_num_t chargerlim_pin, gpio_pull_mode_t GPIO_PULLDOWN_ONLY);
   ledcSetup(chargerpwm_ch, 1000, 10); // channel, freq, res
@@ -199,7 +199,7 @@ void loop()
       WiFi.begin(sta_ssid, sta_password);
     }
   }
-  if (!SD.exists("/html/index.html"))
+  /*if (!SD.exists("/html/index.html"))
   {
     Serial.println("SD card removed!");
     SD.end();
@@ -213,7 +213,7 @@ void loop()
     {
       Serial.println("Failed to reinitialize SD card");
     }
-  } 
+  } */
   evse_on = gpio_get_level(EVSE);
   evse_on = !evse_on;
   soclim = gpio_get_level(chargerlim_pin);
@@ -228,9 +228,9 @@ void loop()
     }
     else
     {
+      charger_duty = 0;
       if (vmax > 4.15)
       {
-        charger_duty = 0;
         endofcharge = true;
         esp_light_sleep_start();
       }
@@ -264,22 +264,29 @@ String GetSerialData(String input)
   int vmax_idx = 0;
   int dissipated_energy_idx = 0;
   //int status_idx = 0;
-  serial_str = "";
+  celltemp = 0;
+  stateofcharge = 0;
+  lemsensor = 0;
+  vmin = 0;
+  vmax = 0;
+  dissipated_energy = 0;
+  counter = 0;
   serial_str.clear();
-  
+  serial_str.reserve(3500);
+  serial_str = "";
+
   if (input.length() < 2)
   {
-    input += "\r";
-    Serial1.print(input);
-    Serial.print(input);
+    Serial1.println(input);
+    Serial.println(input);
   }
-  while (!Serial1.available() && rx_timeout <= 10)
+  while (!Serial1.available() && rx_timeout <= 1000)
   {
     rx_timeout++;
-    delay(1000);
+    delay(10);
     Serial.print(".");
   }
-  if (rx_timeout > 10)
+  if (rx_timeout > 1000)
   {
     rx_timeout = 0;
     Serial.println("No data received: timeout");
@@ -292,6 +299,7 @@ String GetSerialData(String input)
   while (Serial1.available())
   {
     serial_str += char(Serial1.read());
+    delayMicroseconds(10);
   }
   //Serial.println(serial_str);
   if (input.startsWith("t"))
@@ -335,7 +343,7 @@ String GetSerialData(String input)
     Serial.println(stateofcharge);
     Serial.print("lemsensor ");
     Serial.println(lemsensor);
-    return "Succes";
+    output = "Succes";
   }
 
   if (input == "d")
@@ -343,11 +351,11 @@ String GetSerialData(String input)
     serial_str.replace(" ", "");
     dissipated_energy_idx = serial_str.indexOf("dissipata") + 9;
     dissipated_energy = serial_str.substring(dissipated_energy_idx, dissipated_energy_idx + 6).toFloat();
-    return "Succes";
+    output = "Succes";
   }
   logfile.println((String) "Vmin: " + vmin + "   Vmax: " + vmax + "   PWM: " + charger_duty + "   Temperature: " + celltemp + "   SOC: " + stateofcharge + "   LEM: " + lemsensor);
   logfile.close();
-  return "Succes";
+  return output;
 }
 
 void ControlCharger()
@@ -408,6 +416,11 @@ void ControlCharger()
   {
     charger_duty = 0;
   }
+  if (vmin == 0)
+  {
+    charger_duty = 0;
+  }
+  
   ledcWrite(chargerpwm_ch, charger_duty);
 }
 
