@@ -1,3 +1,4 @@
 /.pio
+/.vs
 /.vscode
-/include
+/include/credentials.h
