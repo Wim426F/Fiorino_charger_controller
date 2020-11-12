@@ -4,12 +4,12 @@
 #include <ESPAsyncWebServer.h>
 #include <AsyncTCP.h>
 #include <AsyncWebSocket.h>
-#include <AsyncJson.h>
 #include <SD.h>
 #include <SPI.h>
 #include <elapsedMillis.h>
 #include <string>
-//#include "esp32_bt_music_receiver.h"
+#include "esp32_bt_music_receiver.h"
+#include <credentials.h>
 
 void task_core0(void *pvParameters);
 void StartMdnsService();
@@ -62,16 +62,16 @@ bool evse_on = false;
 bool soclim = false;
 
 /* Connectivity */
-const char *sta_ssid = "Boone-Huis";
-const char *sta_password = "b00n3meubelstof@";
-const char *ap_ssid = "Fiorino";
-const char *ap_password = "3VLS042020";
-const char *ota_hostname = "FIORINO_ESP32";
-const char *ota_password = "MaPe1!";
-const char *dns_hostname = "fiorino";
-const char *http_username = "3vls04";
-const char *http_password = "f!0r!n0";
-const char *PARAM_INPUT_1 = "function";
+extern const char *sta_ssid;
+extern const char *sta_password;
+extern const char *ap_ssid;
+extern const char *ap_password;
+extern const char *ota_hostname;
+extern const char *ota_password;
+extern const char *dns_hostname;
+extern const char *http_username;
+extern const char *http_password;
+extern const char *PARAM_INPUT_1;
 
 IPAddress local_ip(192, 168, 1, 173);
 IPAddress ap_ip(192, 168, 4, 22);
@@ -106,13 +106,12 @@ const uint8_t lock_high = 3;
 const uint8_t unlock_low = 4;
 const uint8_t unlock_high = 5;
 
-/* // Bluetooth 
+// Bluetooth 
 BluetoothA2DSink a2d_sink;
 char *blde_name = "FIORINO_BT";
 
 void BluetoothAudio()
 {
-  
   static const i2s_config_t i2s_config = {
       .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
       .sample_rate = 44100,                         // corrected by info from bluetooth
@@ -131,10 +130,9 @@ void BluetoothAudio()
       .data_in_num = I2S_PIN_NO_CHANGE};
   
   a2d_sink.set_i2s_config(i2s_config);
-  //a2d_sink.set_pin_config(i2s_pin_config);
+  a2d_sink.set_pin_config(i2s_pin_config);
   a2d_sink.start(blde_name);
 }
-*/
 
 void setup()
 {
@@ -146,20 +144,20 @@ void setup()
   WiFi.mode(WIFI_AP_STA);
   WiFi.config(local_ip, gateway, subnet);
   WiFi.begin(sta_ssid, sta_password);
+  WiFi.setAutoReconnect(true);
   WiFi.softAPConfig(ap_ip, gateway, subnet);
   WiFi.softAP(ap_ssid, ap_password, ssid_hidden, max_connection);
   if (WiFi.status() == WL_CONNECTED)
   {
     Serial.println("Wifi connected to: " + (String)sta_ssid);
   }
-  Serial.println(WiFi.localIP());
   //Over The Air update
   ArduinoOTA.setHostname(ota_hostname);
   ArduinoOTA.setPassword(ota_password);
   ArduinoOTA.begin();
   StartMdnsService();
   StartWebServer();
-  //BluetoothAudio();
+  BluetoothAudio();
 
   esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_SLOW_MEM, ESP_PD_OPTION_AUTO);
   esp_sleep_enable_uart_wakeup(0);
@@ -181,14 +179,7 @@ void setup()
 void loop()
 {
   ArduinoOTA.handle();
-  if (WiFi.status() != WL_CONNECTED)
-  {
-    available_networks = WiFi.scanNetworks(sta_ssid, sta_ssid);
-    if (available_networks == 1)
-    {
-      WiFi.begin(sta_ssid, sta_password);
-    }
-  }
+  
   if (!SD.exists("/html/index.html"))
   {
     Serial.println("SD card removed!");
@@ -210,7 +201,7 @@ void loop()
 
   if (since_int1 > int1)
   {
-    since_int1 = since_int1 - int1;
+    since_int1 -= int1;
     Serial.println("getting data");
     if (GetSerialData("t") == "Succes")
     {
@@ -229,7 +220,7 @@ void loop()
 
   if (since_int2 > int2)
   {
-    since_int2 = since_int2 - int2;
+    since_int2 -= int2;
     Serial.println((String) "vmin: " + vmin + "   vmax: " + vmax + "   PWM: " + charger_duty);
   }
   /*
@@ -359,7 +350,7 @@ void ControlCharger()
 {
   if (vmin < vmin_lim && vmin > 0)
   {
-    charger_duty = 910 - (vmin_lim - vmin) * 1000 - 150;
+    charger_duty = 915 - (vmin_lim - vmin) * 1000 - 150;
     if (charger_duty < 100)
     {
       charger_duty = 150;
@@ -491,7 +482,6 @@ String processor(const String &var)
   }
   return String();
 }
-
 void StartWebServer()
 {
   ws.onEvent(onWsEvent);
@@ -513,24 +503,18 @@ void StartWebServer()
   server.on("/datalog", HTTP_GET, [](AsyncWebServerRequest *request) {
     File page = SD.open("/html/datalog.html", "r");
     File logfile;
-    bool download = false;
-    request->send(page, "/datalog", "text/html", download, processor);
-    String logfunctions;
-    // GET input1 value on fiorino.local/datalog?function=<download>
+    request->send(page, "/datalog", "text/html", false, processor);
+    String inputparam;
+    // GET input1 value on fiorino.local/datalog?function=<delete>
     if (request->hasParam(PARAM_INPUT_1))
     {
-      logfunctions = request->getParam(PARAM_INPUT_1)->value();
+      inputparam = request->getParam(PARAM_INPUT_1)->value();
     }
-    if (logfunctions == "delete")
+    if (inputparam == "delete")
     {
-      page.close();
-      logfile = SD.open("/log/logfile.txt", FILE_WRITE);
+      logfile = SD.open("/log/logfile.txt", "w");
       logfile.print("");
       logfile.close();
-    }
-    if (logfunctions == "download")
-    {
-      download = true;
     }
   });
   server.on("/logfile", HTTP_GET, [](AsyncWebServerRequest *request) {
