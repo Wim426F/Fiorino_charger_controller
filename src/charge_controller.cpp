@@ -71,7 +71,8 @@ extern const char *ota_password;
 extern const char *dns_hostname;
 extern const char *http_username;
 extern const char *http_password;
-extern const char *PARAM_INPUT_1;
+
+const char *PARAM_INPUT_1 = "function";
 
 IPAddress local_ip(192, 168, 1, 173);
 IPAddress ap_ip(192, 168, 4, 22);
