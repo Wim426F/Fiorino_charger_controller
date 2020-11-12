@@ -2,3 +2,6 @@
 /.vs
 /.vscode
 /include/credentials.h
+/test
+/lib/README
+/include/README
