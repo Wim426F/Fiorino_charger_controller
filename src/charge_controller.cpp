@@ -48,13 +48,13 @@ float status = 0;
 float charger_duty = 0;
 
 /* Limits */
-const float celltemp_min = 0.0;
-const float celltemp_max = 40.0;
-const float celltemp_hyst_max = 10.0;
-const float vmin_lim = 3.000;
-const float vmax_lim_low = 4.000;
-const float vmax_lim_upp = 4.150;
-const float dissipated_energy_max = 2000.00;
+const float CELLTEMP_MIN = 0.0;
+const float CELLTEMP_MAX = 40.0;
+const float CELLTEMP_EXCEED_MAX = 10.0;
+const float VMIN_LIM = 3.000;
+const float VMAX_LIM_LOWER = 4.000;
+const float VMAX_LIM_UPPER = 4.150;
+const float WH_DISSIPATED_MAX = 2000.00;
 
 /* Triggers */
 bool endofcharge = false;
@@ -92,7 +92,7 @@ typedef int32_t esp_err_t;
 typedef int uart_port_t;
 
 /* GPIO */
-#define chargerlim_pin GPIO_NUM_36
+#define CHARGER_LIMITED GPIO_NUM_36
 #define EVSE GPIO_NUM_39
 #define RX1 GPIO_NUM_35
 #define TX1 GPIO_NUM_33
@@ -164,7 +164,7 @@ void setup()
   esp_sleep_enable_uart_wakeup(0);
   esp_sleep_enable_uart_wakeup(1);
   esp_err_t gpio_set_pull_mode(gpio_num_t EVSE, gpio_pull_mode_t GPIO_PULLDOWN_ONLY);
-  esp_err_t gpio_set_pull_mode(gpio_num_t chargerlim_pin, gpio_pull_mode_t GPIO_PULLDOWN_ONLY);
+  esp_err_t gpio_set_pull_mode(gpio_num_t CHARGER_LIMITED, gpio_pull_mode_t GPIO_PULLDOWN_ONLY);
   ledcSetup(chargerpwm_ch, 1000, 10); // channel, freq, res
   ledcSetup(lock_high, 1000, 8);
   ledcSetup(lock_low, 1000, 8);
@@ -198,7 +198,7 @@ void loop()
   } 
   evse_on = gpio_get_level(EVSE);
   evse_on = !evse_on;
-  soclim = gpio_get_level(chargerlim_pin);
+  soclim = gpio_get_level(CHARGER_LIMITED);
 
   if (since_int1 > int1)
   {
@@ -349,51 +349,51 @@ String GetSerialData(String input)
 
 void ControlCharger()
 {
-  if (vmin < vmin_lim && vmin > 0)
+  if (vmin < VMIN_LIM && vmin > 0)
   {
-    charger_duty = 915 - (vmin_lim - vmin) * 1000 - 150;
+    charger_duty = 915 - (VMIN_LIM - vmin) * 1000 - 150;
     if (charger_duty < 100)
     {
       charger_duty = 150;
     }
   }
 
-  if (vmin >= vmin_lim && vmax <= vmax_lim_low)
+  if (vmin >= VMIN_LIM && vmax <= VMAX_LIM_LOWER)
   {
     charger_duty = 910;
   }
 
-  if (vmin >= vmin_lim && vmax >= vmax_lim_low && vmax <= vmax_lim_upp)
+  if (vmin >= VMIN_LIM && vmax >= VMAX_LIM_LOWER && vmax <= VMAX_LIM_UPPER)
   {
-    charger_duty = (vmax_lim_upp - vmax) * 3800 + 100;
+    charger_duty = (VMAX_LIM_UPPER - vmax) * 3800 + 100;
   }
 
-  if (vmax > vmax_lim_upp)
+  if (vmax > VMAX_LIM_UPPER)
   {
     charger_duty = 0;
   }
   /*
-  if (temp <= celltemp_min)
+  if (temp <= CELLTEMP_MIN)
   {
-    if (celltemp_min - temp > celltemp_hyst_max)
+    if (CELLTEMP_MIN - temp > CELLTEMP_EXCEED_MAX)
     {
       charger_duty = 0;
     }
     else
     {
-      charger_duty -= (celltemp_min - temp) * 10; // subtract the temp difference times 10
+      charger_duty -= (CELLTEMP_MIN - temp) * 10; // subtract the temp difference times 10
     }
   }
 
-  if (temp >= celltemp_max) // check if temp is outside of preferred range but still within max deviation
+  if (temp >= CELLTEMP_MAX) // check if temp is outside of preferred range but still within max deviation
   {
-    if (temp - celltemp_max > celltemp_hyst_max)
+    if (temp - CELLTEMP_MAX > CELLTEMP_EXCEED_MAX)
     {
       charger_duty = 0;
     }
     else
     {
-      charger_duty -= (temp - celltemp_max) * 10;
+      charger_duty -= (temp - CELLTEMP_MAX) * 10;
     }
   }
   */
@@ -401,7 +401,7 @@ void ControlCharger()
   {
     charger_duty = 0;
   }
-  if (dissipated_energy > dissipated_energy_max)
+  if (dissipated_energy > WH_DISSIPATED_MAX)
   {
     charger_duty = 0;
   }
