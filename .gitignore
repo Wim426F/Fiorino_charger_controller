@@ -1,8 +1,8 @@
 /.pio
 /.vs
 /.vscode
-include/credentials.h
+/include/credentials.h
 test/**
 lib/README
-include/README
-include/**
+/include/README
+/include/**
