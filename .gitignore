@@ -5,3 +5,4 @@ include/credentials.h
 test/**
 lib/README
 include/README
+include/**
