@@ -8,7 +8,6 @@
 #include <SPI.h>
 #include <elapsedMillis.h>
 #include <string>
-#include "esp32_bt_music_receiver.h"
 #include <credentials.h>
 
 void task_core0(void *pvParameters);
@@ -49,8 +48,9 @@ float charger_duty = 0;
 
 /* Limits */
 const float CELLTEMP_MIN = 0.0;
-const float CELLTEMP_MAX = 40.0;
-const float CELLTEMP_EXCEED_MAX = 10.0;
+const float CELLTEMP_PREFERRED = 10.0;
+const float CELLTEMP_MAX = 45.0;
+
 const float VMIN_LIM = 3.000;
 const float VMAX_LIM_LOWER = 4.000;
 const float VMAX_LIM_UPPER = 4.150;
@@ -96,9 +96,6 @@ typedef int uart_port_t;
 #define EVSE GPIO_NUM_39
 #define RX1 GPIO_NUM_35
 #define TX1 GPIO_NUM_33
-#define BCK GPIO_NUM_13
-#define LCK GPIO_NUM_15
-#define DIN GPIO_NUM_14
 
 /* PWM channels */
 const uint8_t chargerpwm_ch = 1;
@@ -106,34 +103,6 @@ const uint8_t lock_low = 2;
 const uint8_t lock_high = 3;
 const uint8_t unlock_low = 4;
 const uint8_t unlock_high = 5;
-
-// Bluetooth 
-BluetoothA2DSink a2d_sink;
-char *blde_name = "FIORINO_BT";
-
-void BluetoothAudio()
-{
-  static const i2s_config_t i2s_config = {
-      .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
-      .sample_rate = 44100,                         // corrected by info from bluetooth
-      .bits_per_sample = (i2s_bits_per_sample_t)16, // the DAC module will only take the 8bits from MSB 
-      .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
-      .communication_format = I2S_COMM_FORMAT_I2S_MSB,
-      .intr_alloc_flags = 0, // default interrupt priority
-      .dma_buf_count = 8,
-      .dma_buf_len = 64,
-      .use_apll = false};
-
-  static const i2s_pin_config_t i2s_pin_config = {
-      .bck_io_num = BCK, 
-      .ws_io_num = LCK, 
-      .data_out_num = DIN, 
-      .data_in_num = I2S_PIN_NO_CHANGE};
-  
-  a2d_sink.set_i2s_config(i2s_config);
-  a2d_sink.set_pin_config(i2s_pin_config);
-  a2d_sink.start(blde_name);
-}
 
 void setup()
 {
@@ -158,7 +127,6 @@ void setup()
   ArduinoOTA.begin();
   StartMdnsService();
   StartWebServer();
-  BluetoothAudio();
 
   esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_SLOW_MEM, ESP_PD_OPTION_AUTO);
   esp_sleep_enable_uart_wakeup(0);
@@ -180,7 +148,7 @@ void setup()
 void loop()
 {
   ArduinoOTA.handle();
-  
+
   if (!SD.exists("/html/index.html"))
   {
     Serial.println("SD card removed!");
@@ -195,7 +163,7 @@ void loop()
     {
       Serial.println("Failed to reinitialize SD card");
     }
-  } 
+  }
   evse_on = gpio_get_level(EVSE);
   evse_on = !evse_on;
   soclim = gpio_get_level(CHARGER_LIMITED);
@@ -245,7 +213,7 @@ String GetSerialData(String input)
   {
     logfile = SD.open("/log/logfile.txt", FILE_APPEND);
   }
-  
+
   int celltemp_idx = 0;
   int stateofcharge_idx = 0;
   int lemsensor_idx = 0;
@@ -372,44 +340,40 @@ void ControlCharger()
   {
     charger_duty = 0;
   }
-  /*
-  if (temp <= CELLTEMP_MIN)
+
+  /* Temperature */
+  if (celltemp < CELLTEMP_MIN && celltemp > -5)
   {
-    if (CELLTEMP_MIN - temp > CELLTEMP_EXCEED_MAX)
-    {
-      charger_duty = 0;
-    }
-    else
-    {
-      charger_duty -= (CELLTEMP_MIN - temp) * 10; // subtract the temp difference times 10
-    }
+    charger_duty = 140;
   }
 
-  if (temp >= CELLTEMP_MAX) // check if temp is outside of preferred range but still within max deviation
+  if (celltemp < CELLTEMP_PREFERRED && celltemp > CELLTEMP_MIN) // throttle charger when temperature is lower
   {
-    if (temp - CELLTEMP_MAX > CELLTEMP_EXCEED_MAX)
-    {
-      charger_duty = 0;
-    }
-    else
-    {
-      charger_duty -= (temp - CELLTEMP_MAX) * 10;
-    }
+    charger_duty -= (CELLTEMP_PREFERRED - celltemp) * (charger_duty / 10);
   }
-  */
-  if ((charger_duty > 0 && charger_duty < 100) || charger_duty < 0)
-  {
-    charger_duty = 0;
-  }
-  if (dissipated_energy > WH_DISSIPATED_MAX)
-  {
-    charger_duty = 0;
-  }
-  if (vmin == 0)
+
+  if (celltemp > CELLTEMP_MAX)
   {
     charger_duty = 0;
   }
   
+
+  /* Balancing */
+  if (dissipated_energy > WH_DISSIPATED_MAX)
+  {
+    charger_duty = 0;
+  }
+
+  if ((charger_duty > 0 && charger_duty < 100) || charger_duty < 0)
+  {
+    charger_duty = 0;
+  }
+
+  if (vmin == 0)
+  {
+    charger_duty = 0;
+  }
+
   ledcWrite(chargerpwm_ch, charger_duty);
 }
 
