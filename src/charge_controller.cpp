@@ -10,6 +10,7 @@
 #include <string>
 #include <credentials.h>
 
+
 void task_core0(void *pvParameters);
 void StartMdnsService();
 void StartWebServer();
@@ -27,7 +28,7 @@ File logfile;
 /* Timers */
 elapsedMillis since_int1 = 0;
 elapsedMillis since_int2 = 0;
-const long int1 = 20000; //bms request interval
+const long int1 = 5000; //bms request interval
 const long int2 = 5000;
 int rx_timeout = 0;
 int counter;
@@ -148,7 +149,7 @@ void setup()
 void loop()
 {
   ArduinoOTA.handle();
-
+  /*
   if (!SD.exists("/html/index.html"))
   {
     Serial.println("SD card removed!");
@@ -163,14 +164,13 @@ void loop()
     {
       Serial.println("Failed to reinitialize SD card");
     }
-  }
+  } */
   evse_on = gpio_get_level(EVSE);
   evse_on = !evse_on;
   soclim = gpio_get_level(CHARGER_LIMITED);
 
   if (since_int1 > int1)
   {
-    since_int1 -= int1;
     Serial.println("getting data");
     if (GetSerialData("t") == "Succes")
     {
@@ -185,12 +185,13 @@ void loop()
         esp_light_sleep_start();
       }
     }
+    since_int1 -= int1;
   }
 
   if (since_int2 > int2)
   {
-    since_int2 -= int2;
     Serial.println((String) "vmin: " + vmin + "   vmax: " + vmax + "   PWM: " + charger_duty);
+    since_int2 -= int2;
   }
   /*
   if (evse_on == true)
@@ -230,20 +231,19 @@ String GetSerialData(String input)
   counter = 0;
   serial_str.clear();
   serial_str.reserve(3500);
-  serial_str = "";
 
   if (input.length() < 2)
   {
     Serial1.println(input);
     Serial.println(input);
   }
-  while (!Serial1.available() && rx_timeout <= 300)
+  while (!Serial1.available() && rx_timeout <= 30)
   {
     rx_timeout++;
-    delay(100);
+    delay(1000);
     Serial.print(".");
   }
-  if (rx_timeout > 1000)
+  if (rx_timeout >= 3000)
   {
     rx_timeout = 0;
     Serial.println("No data received: timeout");
@@ -256,28 +256,41 @@ String GetSerialData(String input)
   while (Serial1.available())
   {
     serial_str += char(Serial1.read());
-    delayMicroseconds(10);
+    delayMicroseconds(1);
   }
-  //Serial.println(serial_str);
   if (input.startsWith("t"))
   {
     serial_str.replace(" ", "");
     serial_str.replace("*", "");
     serial_str.replace("N.C.", "");
-    Serial.println(serial_str);
+
     stateofcharge_idx = serial_str.indexOf("SOC") + 4;
     stateofcharge = serial_str.substring(stateofcharge_idx, stateofcharge_idx + 5).toFloat();
     lemsensor_idx = serial_str.indexOf("LEM") + 4;
     lemsensor = serial_str.substring(lemsensor_idx, lemsensor_idx + 6).toFloat();
-    celltemp_idx = serial_str.indexOf("SOC") - 9;
-    if (serial_str.substring(celltemp_idx, celltemp_idx + 5).startsWith("-"))
+    celltemp_idx = serial_str.indexOf("SOC") - 6;
+
+    // double digit positive temperature (>9) or single digit negative      3.736   6.46.6SOC:
+    if (serial_str.charAt(celltemp_idx) == '.')                                   //0123456
     {
-      celltemp = serial_str.substring(celltemp_idx, celltemp_idx + 5).toFloat();
+      celltemp = serial_str.substring(celltemp_idx + 2, celltemp_idx + 6).toFloat();
+      Serial.println((String) "2digit pos: " + serial_str.substring(celltemp_idx + 2, celltemp_idx + 6));
     }
-    else
+
+    // single digit positive temperature (>0 & <9)
+    if ((serial_str.charAt(celltemp_idx + 1)) == '.')
     {
-      celltemp = serial_str.substring(celltemp_idx + 1, celltemp_idx + 5).toFloat();
+      celltemp = serial_str.substring(celltemp_idx + 3, celltemp_idx + 6).toFloat();
+      Serial.println((String) "1 digit: " + serial_str.substring(celltemp_idx + 3, celltemp_idx + 6));
     }
+
+    // if temp is >-1 & < 1,
+    if (serial_str.charAt(celltemp_idx + 2) == '.')
+    {
+      celltemp = serial_str.substring(celltemp_idx + 4, celltemp_idx + 6).toFloat();
+      Serial.println((String) "only decimal: " + serial_str.substring(celltemp_idx + 4, celltemp_idx + 6));
+    }
+
     if (serial_str.indexOf("Vmin") > -1 && serial_str.indexOf("Vmax") > -1)
     {
       vmin_idx = serial_str.indexOf("Vmin:") + 5;
@@ -312,6 +325,7 @@ String GetSerialData(String input)
   }
   logfile.println((String) "Vmin: " + vmin + "   Vmax: " + vmax + "   PWM: " + charger_duty + "   Temperature: " + celltemp + "   SOC: " + stateofcharge + "   LEM: " + lemsensor);
   logfile.close();
+
   return output;
 }
 
@@ -322,7 +336,7 @@ void ControlCharger()
     charger_duty = 915 - (VMIN_LIM - vmin) * 1000 - 150;
     if (charger_duty < 100)
     {
-      charger_duty = 150;
+      charger_duty = 170;
     }
   }
 
@@ -342,21 +356,21 @@ void ControlCharger()
   }
 
   /* Temperature */
+
   if (celltemp < CELLTEMP_MIN && celltemp > -5)
   {
-    charger_duty = 140;
+    charger_duty = 170;
   }
 
   if (celltemp < CELLTEMP_PREFERRED && celltemp > CELLTEMP_MIN) // throttle charger when temperature is lower
   {
-    charger_duty -= (CELLTEMP_PREFERRED - celltemp) * (charger_duty / 10);
+    charger_duty -= (CELLTEMP_PREFERRED - celltemp) * (charger_duty / 20);
   }
 
   if (celltemp > CELLTEMP_MAX)
   {
     charger_duty = 0;
   }
-  
 
   /* Balancing */
   if (dissipated_energy > WH_DISSIPATED_MAX)
@@ -374,6 +388,13 @@ void ControlCharger()
     charger_duty = 0;
   }
 
+  if (charger_duty != 0)
+  {
+    if (charger_duty < 170)
+    {
+      charger_duty = 170;
+    }
+  }
   ledcWrite(chargerpwm_ch, charger_duty);
 }
 
@@ -441,12 +462,22 @@ String processor(const String &var)
   if (var == "BUTTONPLACEHOLDER")
   {
     String buttons = "";
+    buttons += "<p class=\"textstyle\">Temperature: </p>";
+    buttons += "<b class=\"textstyle\">";
+    buttons += (String)celltemp;
+    buttons += "</b>";
+    buttons += "<p class=\"textstyle\">Speed: </p>";
+    buttons += "<b class=\"textstyle\">";
+    buttons += (String)charger_duty;
+    buttons += "</b>";
+    
     //buttons += "<label class=\"button\"><input value=\"Download\" type=\"button\" oncick=\"editlog(this)\" id=\"download\" " + outputState(2) + "></label>";
-    //buttons += "<label class=\"button\"><input value=\"Delete\" type=\"button\" onclick=\"editlog(this)\" id=\"delete\" " + outputState(4) + "></label>";
+    buttons += "<label class=\"button\"><input value=\"Delete\" type=\"button\" onclick=\"editlog(this)\" id=\"delete\" " + outputState(4) + "></label>";
     return buttons;
   }
   return String();
 }
+
 void StartWebServer()
 {
   ws.onEvent(onWsEvent);
