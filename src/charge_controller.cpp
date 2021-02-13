@@ -1,3 +1,4 @@
+// libraries
 #include <ArduinoOTA.h>
 #include <WiFi.h>
 #include <ESPmDNS.h>
@@ -7,9 +8,16 @@
 #include <SD.h>
 #include <SPI.h>
 #include <elapsedMillis.h>
-#include <string>
+
+// headers
 #include <credentials.h>
 
+// cpp std
+using namespace std;
+#include <string>
+#include <algorithm>
+
+#define Serial1 Serial
 
 void task_core0(void *pvParameters);
 void StartMdnsService();
@@ -19,7 +27,7 @@ void handleUpload(AsyncWebServerRequest *request, String filename, size_t index,
 void handleUploadWebpage(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final);
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
 void SendSocketData();
-String GetSerialData(String input = "");
+string GetSerialData(string input = "t");
 void ControlCharger();
 void LockEvse(bool lock_evse);
 
@@ -34,15 +42,16 @@ int rx_timeout = 0;
 int counter;
 
 /* Variables */
-String serial_str;
-String status_str;
-String output;
+string serial_str;
+string status_str;
+string output;
 
 float celltemp = 0;
 float stateofcharge = 0;
 float lemsensor = 0;
 float vmin = 0;
 float vmax = 0;
+float vtot = 0;
 float dissipated_energy = 0;
 float status = 0;
 float charger_duty = 0;
@@ -108,7 +117,7 @@ const uint8_t unlock_high = 5;
 void setup()
 {
   Serial.begin(115200);
-  Serial1.begin(115200, SERIAL_8N1, RX1, TX1);
+  //Serial1.begin(115200, SERIAL_8N1, RX1, TX1);
   Serial1.setRxBufferSize(4096);
   serial_str.reserve(3500);
   SD.begin(SS, SPI, 80000000, "/sd", 20);
@@ -185,7 +194,7 @@ void loop()
         esp_light_sleep_start();
       }
     }
-    since_int1 -= int1;
+    since_int1 = since_int1 - int1;
   }
 
   if (since_int2 > int2)
@@ -204,38 +213,44 @@ void loop()
   } */
 }
 
-String GetSerialData(String input)
+inline float stof(const string &_Str, size_t *_Idx = nullptr) // convert string to float
 {
-  if (!SD.exists("/log/logfile.txt"))
+  int &_Errno_ref = errno; // Nonzero cost, pay it once
+  const char *_Ptr = _Str.c_str();
+  char *_Eptr;
+  _Errno_ref = 0;
+  const float _Ans = strtof(_Ptr, &_Eptr);
+
+  if (_Idx)
+  {
+    *_Idx = static_cast<size_t>(_Eptr - _Ptr);
+  }
+
+  return _Ans;
+}
+
+string GetSerialData(string input)
+{
+  if (SD.totalBytes() - SD.usedBytes() < 1000)
   {
     logfile = SD.open("/log/logfile.txt", FILE_WRITE);
+    logfile.print(" ");
   }
-  else
+  if (SD.exists("/log/logfile.txt"))
   {
     logfile = SD.open("/log/logfile.txt", FILE_APPEND);
   }
+  else
+  {
+    logfile = SD.open("/log/logfile.txt", FILE_WRITE);
+  }
 
-  int celltemp_idx = 0;
-  int stateofcharge_idx = 0;
-  int lemsensor_idx = 0;
-  int vmin_idx = 0;
-  int vmax_idx = 0;
-  int dissipated_energy_idx = 0;
-  //int status_idx = 0;
-  celltemp = 0;
-  stateofcharge = 0;
-  lemsensor = 0;
-  vmin = 0;
-  vmax = 0;
-  dissipated_energy = 0;
-  counter = 0;
   serial_str.clear();
-  serial_str.reserve(3500);
 
   if (input.length() < 2)
   {
-    Serial1.println(input);
-    Serial.println(input);
+    Serial1.println(input.c_str());
+    Serial.println(input.c_str());
   }
   while (!Serial1.available() && rx_timeout <= 30)
   {
@@ -243,7 +258,7 @@ String GetSerialData(String input)
     delay(1000);
     Serial.print(".");
   }
-  if (rx_timeout >= 3000)
+  if (rx_timeout >= 30)
   {
     rx_timeout = 0;
     Serial.println("No data received: timeout");
@@ -251,80 +266,86 @@ String GetSerialData(String input)
   }
   else
   {
+    rx_timeout = 0;
     Serial.println("BMS data received!");
+
+    while (Serial1.available())
+    {
+      serial_str += char(Serial1.read());
+      delayMicroseconds(1);
+    }
+
+    remove(serial_str.begin(), serial_str.end(), ' ');
+    serial_str.resize(2040);
+
+    if (input[0] == 't')
+    {
+      dissipated_energy = 0;
+      size_t dissipated_energy_idx = 0;
+
+      // Cell temperature
+      size_t celltemp_idx = serial_str.find("-7f") + 21;
+      if (serial_str[celltemp_idx] == '-')
+        celltemp = stof(serial_str.substr(celltemp_idx, celltemp_idx + 4));
+      if (serial_str[celltemp_idx] == '.')
+        celltemp = stof(serial_str.substr(celltemp_idx, celltemp_idx + 2));
+      if (serial_str[celltemp_idx] != '-' || serial_str[celltemp_idx] != '.')
+        celltemp = stof(serial_str.substr(celltemp_idx, celltemp_idx + 4));
+
+      // Total voltage
+      size_t vtot_idx = serial_str.find("Vtot") + 5;
+      vtot = 0;
+      vtot = stof(serial_str.substr(vtot_idx, vtot_idx + 6));
+
+      // SOC
+      size_t stateofcharge_idx = serial_str.find("SOC") + 4;
+      stateofcharge = 0;
+      stateofcharge = stof(serial_str.substr(stateofcharge_idx, stateofcharge_idx + 4));
+
+      // Current Sensor
+      size_t lemsensor_idx = serial_str.find("LEM") + 4;
+      lemsensor = 0;
+      lemsensor = stof(serial_str.substr(lemsensor_idx, lemsensor_idx + 4));
+
+      // Min and max cell voltages
+      size_t vmin_idx = 0, vmax_idx = 0;
+      if (serial_str.find("Vmin") != -1 && serial_str.find("Vmax") != -1)
+      {
+        vmin_idx = serial_str.find("Vmin:") + 5;
+        vmax_idx = serial_str.find("Vmax:") + 5;
+      }
+      if (serial_str.find("Shunt") != -1) // Shunt is similar to vmax
+      {
+        vmin_idx = serial_str.find("Vmed:") + 5;
+        vmax_idx = serial_str.find("Shunt:") + 6;
+      }
+      vmin = 0;
+      vmax = 0;
+      vmin = stof(serial_str.substr(vmin_idx, vmin_idx + 5));
+      vmax = stof(serial_str.substr(vmax_idx, vmax_idx + 5));
+
+      Serial.print("vmin: ");
+      Serial.println(vmin);
+      Serial.print("vmax: ");
+      Serial.println(vmax);
+      Serial.print("Temperature: ");
+      Serial.println(celltemp);
+      Serial.print("State of Charge: ");
+      Serial.println(stateofcharge);
+      Serial.print("Current sensor: ");
+      Serial.println(lemsensor);
+      output = "Succes";
+    }
+
+    if (input[0] == 'd')
+    {
+      size_t dissipated_energy_idx = serial_str.find("dissipata") + 9;
+      dissipated_energy = stof(serial_str.substr(dissipated_energy_idx, dissipated_energy_idx + 6));
+      output = "Succes";
+    }
+    logfile.println((String) "Vmin: " + vmin + "   Vmax: " + vmax + "   PWM: " + charger_duty + "   Temperature: " + celltemp + "   SOC: " + stateofcharge + "   LEM: " + lemsensor);
+    logfile.close();
   }
-  while (Serial1.available())
-  {
-    serial_str += char(Serial1.read());
-    delayMicroseconds(1);
-  }
-  if (input.startsWith("t"))
-  {
-    serial_str.replace(" ", "");
-    serial_str.replace("*", "");
-    serial_str.replace("N.C.", "");
-
-    stateofcharge_idx = serial_str.indexOf("SOC") + 4;
-    stateofcharge = serial_str.substring(stateofcharge_idx, stateofcharge_idx + 5).toFloat();
-    lemsensor_idx = serial_str.indexOf("LEM") + 4;
-    lemsensor = serial_str.substring(lemsensor_idx, lemsensor_idx + 6).toFloat();
-    celltemp_idx = serial_str.indexOf("SOC") - 6;
-
-    // double digit positive temperature (>9) or single digit negative      3.736   6.46.6SOC:
-    if (serial_str.charAt(celltemp_idx) == '.')                                   //0123456
-    {
-      celltemp = serial_str.substring(celltemp_idx + 2, celltemp_idx + 6).toFloat();
-      Serial.println((String) "2digit pos: " + serial_str.substring(celltemp_idx + 2, celltemp_idx + 6));
-    }
-
-    // single digit positive temperature (>0 & <9)
-    if ((serial_str.charAt(celltemp_idx + 1)) == '.')
-    {
-      celltemp = serial_str.substring(celltemp_idx + 3, celltemp_idx + 6).toFloat();
-      Serial.println((String) "1 digit: " + serial_str.substring(celltemp_idx + 3, celltemp_idx + 6));
-    }
-
-    // if temp is >-1 & < 1,
-    if (serial_str.charAt(celltemp_idx + 2) == '.')
-    {
-      celltemp = serial_str.substring(celltemp_idx + 4, celltemp_idx + 6).toFloat();
-      Serial.println((String) "only decimal: " + serial_str.substring(celltemp_idx + 4, celltemp_idx + 6));
-    }
-
-    if (serial_str.indexOf("Vmin") > -1 && serial_str.indexOf("Vmax") > -1)
-    {
-      vmin_idx = serial_str.indexOf("Vmin:") + 5;
-      vmax_idx = serial_str.indexOf("Vmax:") + 5;
-    }
-    if (serial_str.indexOf("Shunt") > -1) // Shunt is similar to vmax
-    {
-      vmin_idx = serial_str.indexOf("Vmed:") + 5;
-      vmax_idx = serial_str.indexOf("Shunt:") + 6;
-    }
-    vmin = serial_str.substring(vmin_idx, vmin_idx + 5).toFloat();
-    vmax = serial_str.substring(vmax_idx, vmax_idx + 5).toFloat();
-    Serial.print("vmin ");
-    Serial.println(vmin);
-    Serial.print("vmin ");
-    Serial.println(vmax);
-    Serial.print("temp ");
-    Serial.println(celltemp);
-    Serial.print("stateofcharge ");
-    Serial.println(stateofcharge);
-    Serial.print("lemsensor ");
-    Serial.println(lemsensor);
-    output = "Succes";
-  }
-
-  if (input == "d")
-  {
-    serial_str.replace(" ", "");
-    dissipated_energy_idx = serial_str.indexOf("dissipata") + 9;
-    dissipated_energy = serial_str.substring(dissipated_energy_idx, dissipated_energy_idx + 6).toFloat();
-    output = "Succes";
-  }
-  logfile.println((String) "Vmin: " + vmin + "   Vmax: " + vmax + "   PWM: " + charger_duty + "   Temperature: " + celltemp + "   SOC: " + stateofcharge + "   LEM: " + lemsensor);
-  logfile.close();
 
   return output;
 }
@@ -334,49 +355,34 @@ void ControlCharger()
   if (vmin < VMIN_LIM && vmin > 0)
   {
     charger_duty = 915 - (VMIN_LIM - vmin) * 1000 - 150;
+
     if (charger_duty < 100)
-    {
       charger_duty = 170;
-    }
   }
 
   if (vmin >= VMIN_LIM && vmax <= VMAX_LIM_LOWER)
-  {
     charger_duty = 910;
-  }
 
   if (vmin >= VMIN_LIM && vmax >= VMAX_LIM_LOWER && vmax <= VMAX_LIM_UPPER)
-  {
     charger_duty = (VMAX_LIM_UPPER - vmax) * 3800 + 100;
-  }
 
   if (vmax > VMAX_LIM_UPPER)
-  {
     charger_duty = 0;
-  }
 
   /* Temperature */
 
-  if (celltemp < CELLTEMP_MIN && celltemp > -5)
-  {
-    charger_duty = 170;
-  }
+  if (celltemp < CELLTEMP_MIN)
+    charger_duty = 0;
 
   if (celltemp < CELLTEMP_PREFERRED && celltemp > CELLTEMP_MIN) // throttle charger when temperature is lower
-  {
     charger_duty -= (CELLTEMP_PREFERRED - celltemp) * (charger_duty / 20);
-  }
 
   if (celltemp > CELLTEMP_MAX)
-  {
     charger_duty = 0;
-  }
 
   /* Balancing */
   if (dissipated_energy > WH_DISSIPATED_MAX)
-  {
     charger_duty = 0;
-  }
 
   if ((charger_duty > 0 && charger_duty < 100) || charger_duty < 0)
   {
@@ -384,16 +390,15 @@ void ControlCharger()
   }
 
   if (vmin == 0)
-  {
     charger_duty = 0;
-  }
 
   if (charger_duty != 0)
   {
     if (charger_duty < 170)
-    {
       charger_duty = 170;
-    }
+
+    if (charger_duty > 915)
+      charger_duty = 915;
   }
   ledcWrite(chargerpwm_ch, charger_duty);
 }
@@ -470,7 +475,7 @@ String processor(const String &var)
     buttons += "<b class=\"textstyle\">";
     buttons += (String)charger_duty;
     buttons += "</b>";
-    
+
     //buttons += "<label class=\"button\"><input value=\"Download\" type=\"button\" oncick=\"editlog(this)\" id=\"download\" " + outputState(2) + "></label>";
     buttons += "<label class=\"button\"><input value=\"Delete\" type=\"button\" onclick=\"editlog(this)\" id=\"delete\" " + outputState(4) + "></label>";
     return buttons;
