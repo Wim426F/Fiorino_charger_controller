@@ -8,6 +8,7 @@
 #include <SD.h>
 #include <SPI.h>
 #include <elapsedMillis.h>
+#include <EEPROM.h>
 
 // headers
 #include <credentials.h>
@@ -17,8 +18,6 @@ using namespace std;
 #include <string>
 #include <algorithm>
 
-#define Serial1 Serial
-
 void task_core0(void *pvParameters);
 void StartMdnsService();
 void StartWebServer();
@@ -27,22 +26,24 @@ void handleUpload(AsyncWebServerRequest *request, String filename, size_t index,
 void handleUploadWebpage(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final);
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
 void SendSocketData();
+void dataLogger(string event = "normal");
 string GetSerialData(string input = "t");
 void ControlCharger();
 void LockEvse(bool lock_evse);
 
 File logfile;
+int logfile_nr = EEPROM.readInt(0);
 
 /* Timers */
 elapsedMillis since_int1 = 0;
 elapsedMillis since_int2 = 0;
-const long int1 = 5000; //bms request interval
-const long int2 = 5000;
+const long int1 = 10000;  //bms request interval
+const long int2 = 120000; // every 2 minutes
 int rx_timeout = 0;
 int counter;
+long time_minutes = 0;
 
 /* Variables */
-string serial_str;
 string status_str;
 string output;
 
@@ -100,6 +101,7 @@ int wifi_timeout = 0;
 
 typedef int32_t esp_err_t;
 typedef int uart_port_t;
+//#define Serial1 Serial
 
 /* GPIO */
 #define CHARGER_LIMITED GPIO_NUM_36
@@ -117,9 +119,8 @@ const uint8_t unlock_high = 5;
 void setup()
 {
   Serial.begin(115200);
-  //Serial1.begin(115200, SERIAL_8N1, RX1, TX1);
+  Serial1.begin(115200, SERIAL_8N1, RX1, TX1);
   Serial1.setRxBufferSize(4096);
-  serial_str.reserve(3500);
   SD.begin(SS, SPI, 80000000, "/sd", 20);
   WiFi.mode(WIFI_AP_STA);
   WiFi.config(local_ip, gateway, subnet);
@@ -153,34 +154,26 @@ void setup()
   ledcAttachPin(GPIO_NUM_22, lock_low);
   ledcAttachPin(GPIO_NUM_16, unlock_high);
   ledcAttachPin(GPIO_NUM_17, unlock_low);
+  delay(1000);
+  if (GetSerialData("t") == "Succes")
+  {
+    ControlCharger();
+  }
 }
 
 void loop()
 {
   ArduinoOTA.handle();
-  /*
-  if (!SD.exists("/html/index.html"))
-  {
-    Serial.println("SD card removed!");
-    SD.end();
-    SD.begin(SS, SPI, 80000000, "/sd", 20);
-    delay(500);
-    if (SD.exists("/html/index.html"))
-    {
-      Serial.println("SD card reinitialized");
-    }
-    else
-    {
-      Serial.println("Failed to reinitialize SD card");
-    }
-  } */
+
+  time_minutes = millis() / 60000; // time in minutes
+
   evse_on = gpio_get_level(EVSE);
   evse_on = !evse_on;
   soclim = gpio_get_level(CHARGER_LIMITED);
 
   if (since_int1 > int1)
   {
-    Serial.println("getting data");
+    Serial.println("\n\nGetting Data");
     if (GetSerialData("t") == "Succes")
     {
       ControlCharger();
@@ -188,9 +181,9 @@ void loop()
     else
     {
       charger_duty = 0;
-      if (vmax > 4.15)
+      if (vmax >= 4.15 && stateofcharge == 70)
       {
-        endofcharge = true;
+        dataLogger("endofcharge");
         esp_light_sleep_start();
       }
     }
@@ -199,7 +192,7 @@ void loop()
 
   if (since_int2 > int2)
   {
-    Serial.println((String) "vmin: " + vmin + "   vmax: " + vmax + "   PWM: " + charger_duty);
+    dataLogger();
     since_int2 -= int2;
   }
   /*
@@ -229,54 +222,99 @@ inline float stof(const string &_Str, size_t *_Idx = nullptr) // convert string 
   return _Ans;
 }
 
-string GetSerialData(string input)
+void dataLogger(string event)
 {
-  if (SD.totalBytes() - SD.usedBytes() < 1000)
+  if (!SD.exists("/html/index.html"))
   {
-    logfile = SD.open("/log/logfile.txt", FILE_WRITE);
-    logfile.print(" ");
-  }
-  if (SD.exists("/log/logfile.txt"))
-  {
-    logfile = SD.open("/log/logfile.txt", FILE_APPEND);
-  }
-  else
-  {
-    logfile = SD.open("/log/logfile.txt", FILE_WRITE);
+    Serial.println("SD card removed!");
+    SD.end();
+    SD.begin(SS, SPI, 80000000, "/sd", 20);
+    delay(500);
+    if (SD.exists("/html/index.html"))
+    {
+      Serial.println("SD card reinitialized");
+    }
+    else
+    {
+      Serial.println("Failed to reinitialize SD card");
+    }
   }
 
-  serial_str.clear();
+  if (SD.totalBytes() - SD.usedBytes() < 1000)
+  {
+    for (int i = 0; i < logfile_nr; i++)
+    {
+      SD.remove("/log/logfile_" + (String)i + ".txt");
+    }
+  }
+
+  if (logfile.size() > 2000000) // max file size 2MB
+  {
+    EEPROM.writeInt(0, logfile_nr + 1); // new file location
+    logfile.close();
+    logfile = SD.open("/log/logfile_" + (String)logfile_nr + ".txt", FILE_WRITE);
+  }
+
+  if (!SD.exists("/log/logfile_0.txt"))
+  {
+    logfile = SD.open("/log/logfile_0.txt", FILE_WRITE);
+    logfile.print("Time,Vmin,Vmax,Vtot,Temperature,SOC,LEM,ChargerPwm\n");
+    EEPROM.writeInt(0, 0);
+  }
+
+  if (event.compare("endofcharge") == 0)
+  {
+    logfile.print("\nCharging Finished. Going to sleep now..\n\n");
+    logfile.close();
+  }
+
+  if (vmin != 0 && vmax != 0 && vtot)
+  {
+    logfile = SD.open("/log/logfile_" + (String)logfile_nr + ".txt", FILE_APPEND);
+    logfile.print((String)time_minutes + "," + vmin + "," + vmax + "," + vtot + "," + celltemp + "," + stateofcharge + "," + lemsensor + "," + (int)charger_duty + "\n");
+  }
+}
+
+string GetSerialData(string input)
+{
+  string serial_str;
+  serial_str.reserve(3500);
+
+  while (Serial1.available() != -1 && rx_timeout < 10)
+  {
+    byte trash = Serial1.read();
+    rx_timeout++; 
+    delay(5);
+  }
 
   if (input.length() < 2)
   {
     Serial1.println(input.c_str());
     Serial.println(input.c_str());
   }
-  while (!Serial1.available() && rx_timeout <= 30)
+  while (!Serial1.available() && rx_timeout <= 300)
   {
     rx_timeout++;
-    delay(1000);
-    Serial.print(".");
+    delay(100);
   }
-  if (rx_timeout >= 30)
+  if (rx_timeout >= 300)
   {
     rx_timeout = 0;
     Serial.println("No data received: timeout");
-    logfile.println("\nNo data received: timeout");
   }
   else
   {
     rx_timeout = 0;
     Serial.println("BMS data received!");
 
-    while (Serial1.available())
+    while (Serial1.available() > 0)
     {
       serial_str += char(Serial1.read());
-      delayMicroseconds(1);
+      delay(2); // very neccesary
     }
 
     remove(serial_str.begin(), serial_str.end(), ' ');
-    serial_str.resize(2040);
+    //serial_str.resize(2040);
 
     if (input[0] == 't')
     {
@@ -328,6 +366,8 @@ string GetSerialData(string input)
       Serial.println(vmin);
       Serial.print("vmax: ");
       Serial.println(vmax);
+      Serial.print("vtot: ");
+      Serial.println(vtot);
       Serial.print("Temperature: ");
       Serial.println(celltemp);
       Serial.print("State of Charge: ");
@@ -343,8 +383,6 @@ string GetSerialData(string input)
       dissipated_energy = stof(serial_str.substr(dissipated_energy_idx, dissipated_energy_idx + 6));
       output = "Succes";
     }
-    logfile.println((String) "Vmin: " + vmin + "   Vmax: " + vmax + "   PWM: " + charger_duty + "   Temperature: " + celltemp + "   SOC: " + stateofcharge + "   LEM: " + lemsensor);
-    logfile.close();
   }
 
   return output;
@@ -471,7 +509,28 @@ String processor(const String &var)
     buttons += "<b class=\"textstyle\">";
     buttons += (String)celltemp;
     buttons += "</b>";
-    buttons += "<p class=\"textstyle\">Speed: </p>";
+
+    buttons += "<p class=\"textstyle\">Battery Current: </p>";
+    buttons += "<b class=\"textstyle\">";
+    buttons += (String)lemsensor;
+    buttons += "</b>";
+
+    buttons += "<p class=\"textstyle\">Battery Voltage: </p>";
+    buttons += "<b class=\"textstyle\">";
+    buttons += (String)vtot;
+    buttons += "</b>";
+
+    buttons += "<p class=\"textstyle\">Vmin: </p>";
+    buttons += "<b class=\"textstyle\">";
+    buttons += (String)vmin;
+    buttons += "</b>";
+
+    buttons += "<p class=\"textstyle\">Vmax: </p>";
+    buttons += "<b class=\"textstyle\">";
+    buttons += (String)vmax;
+    buttons += "</b>";
+
+    buttons += "<p class=\"textstyle\">Charger Speed: </p>";
     buttons += "<b class=\"textstyle\">";
     buttons += (String)charger_duty;
     buttons += "</b>";
@@ -513,13 +572,17 @@ void StartWebServer()
     }
     if (inputparam == "delete")
     {
-      logfile = SD.open("/log/logfile.txt", "w");
+      logfile = SD.open("/log/logfile_" + (String)logfile_nr + ".txt", "w");
       logfile.print("");
       logfile.close();
     }
   });
+  server.on("/logdownload", HTTP_GET, [](AsyncWebServerRequest *request) {
+    File page = SD.open("/log/logfile_" + (String)logfile_nr + ".txt", "r");
+    request->send(page, "/logfile", "text/plain", true);
+  });
   server.on("/logfile", HTTP_GET, [](AsyncWebServerRequest *request) {
-    File page = SD.open("/log/logfile.txt", "r");
+    File page = SD.open("/log/logfile_" + (String)logfile_nr + ".txt", "r");
     request->send(page, "/logfile", "text/plain", false);
   });
   server.on("/test", HTTP_GET, [](AsyncWebServerRequest *request) {
