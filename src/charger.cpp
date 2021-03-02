@@ -216,7 +216,7 @@ string GetSerialData(string input)
   return output;
 }
 
-void ControlCharger()
+void ControlCharger(bool charger_on)
 {
   /* Voltage limits & throttling */
   if (vmin == 0 || vmax == 0 || vtot == 0)
@@ -263,5 +263,14 @@ void ControlCharger()
       charger_duty = 915;
   }
 
-  ledcWrite(chargerpwm_ch, charger_duty);
+  if (charger_on = true)
+  {
+      ledcWrite(chargerpwm_ch, charger_duty);
+  }
+  else 
+  {
+      ledcWrite(chargerpwm_ch, 0);
+  }
+
+  
 }
