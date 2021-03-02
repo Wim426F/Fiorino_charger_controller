@@ -76,6 +76,9 @@ void setup()
   if (GetSerialData("t") == "Succes")
   {
     ControlCharger();
+  } else
+  {
+    ControlCharger(false); //turn of charger
   }
 }
 
@@ -98,7 +101,7 @@ void loop()
     }
     else
     {
-      charger_duty = 0;
+      ControlCharger(false);
     }
     if (vmax >= 4.15 && stateofcharge == 70 && vmin > 4.10 && vtot > 295)
     {
@@ -125,9 +128,9 @@ void loop()
   } */
 }
 
-void LockEvse(bool)
+void LockEvse(bool state)
 {
-  if (true)
+  if (state == true)
   {
     ledcWrite(unlock_high, 200); // switch P fet unlock off
     ledcWrite(unlock_low, 0);    // switch N fet unlock off
@@ -136,7 +139,7 @@ void LockEvse(bool)
     ledcWrite(lock_low, 200);    // switch N fet lock on
     delayMicroseconds(1);
   }
-  if (false)
+  if (state == false)
   {
     ledcWrite(lock_high, 200);  // turn P fet lock off
     ledcWrite(lock_low, 0);     // turn N fet lock off
