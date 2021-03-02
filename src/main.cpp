@@ -99,11 +99,11 @@ void loop()
     else
     {
       charger_duty = 0;
-      if (vmax >= 4.15 && stateofcharge == 70)
-      {
-        dataLogger("endofcharge");
-        esp_light_sleep_start();
-      }
+    }
+    if (vmax >= 4.15 && stateofcharge == 70 && vmin > 4.10 && vtot > 295)
+    {
+      dataLogger("endofcharge");
+      esp_light_sleep_start();
     }
     since_int1 = since_int1 - int1;
   }
@@ -145,6 +145,3 @@ void LockEvse(bool)
     ledcWrite(unlock_low, 200); // turn N fet unlock on
   }
 }
-
-
-
