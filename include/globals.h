@@ -17,6 +17,7 @@
 extern File logfile;
 extern int logfile_nr;
 
+
 /* Variables */
 extern float celltemp;
 extern float stateofcharge;
