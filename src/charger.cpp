@@ -7,7 +7,7 @@ using namespace std;
 int rx_timeout = 0;
 
 string status_str;
-string output;
+string serial_str;
 
 float celltemp = 0;
 float stateofcharge = 0;
@@ -15,7 +15,8 @@ float lemsensor = 0;
 float vmin = 0;
 float vmax = 0;
 float vtot = 0;
-float dissipated_energy = 0;
+float balancing_power = 0;
+float balanced_capacity = 0;
 float status = 0;
 float charger_duty = 0;
 
@@ -34,7 +35,8 @@ const float WH_DISSIPATED_MAX = 2000.00;
 /* Triggers */
 bool endofcharge = false;
 bool evse_on = false;
-bool soclim = false;
+bool charge_limited = false;
+bool is_balancing = false;
 
 inline float stof(const string &_Str, size_t *_Idx = nullptr) // convert string to float
 {
@@ -52,7 +54,7 @@ inline float stof(const string &_Str, size_t *_Idx = nullptr) // convert string 
   return _Ans;
 }
 
-void dataLogger(string event)
+void dataLogger()
 {
   if (!SD.exists("/html/index.html"))
   {
@@ -92,22 +94,37 @@ void dataLogger(string event)
     EEPROM.writeInt(0, 0);
   }
 
-  if (event.compare("endofcharge") == 0)
+  if (endofcharge == true)
   {
-    logfile.print("\nCharging Finished. Going to sleep now..\n\n");
+    logfile.print("\n-- Charging session finished --\n\n");
     logfile.close();
   }
 
-  if (vmin != 0 && vmax != 0 && vtot)
+  static int logs_since_start = 0;
+  if (logs_since_start == 0)
   {
-    logfile = SD.open("/log/logfile_" + (String)logfile_nr + ".txt", FILE_APPEND);
-    logfile.print((String)time_minutes + "," + vmin + "," + vmax + "," + vtot + "," + celltemp + "," + stateofcharge + "," + lemsensor + "," + (int)charger_duty + "\n");
+    logfile.println("\n-- New charging session started --\n");
   }
+  logs_since_start++;
+
+  if (is_balancing == true)
+  {
+    static int i = 0;
+    if (i == 0)
+    {
+      logfile.println("\n-- BMS has started balancing --\n");
+    }
+    i++;
+  }
+  logfile = SD.open("/log/logfile_" + (String)logfile_nr + ".txt", FILE_APPEND);
+  logfile.print((String)time_minutes + "," + vmin + "," + vmax + "," + vtot + "," + celltemp + "," + stateofcharge + "," + lemsensor + "," + (int)charger_duty + "\n");
+  logs_since_start++;
 }
 
 string GetSerialData(string input)
 {
-  string serial_str;
+  string output;
+  serial_str.clear();
   serial_str.reserve(3500);
 
   while (Serial1.available() != -1 && rx_timeout < 10)
@@ -131,11 +148,13 @@ string GetSerialData(string input)
   {
     rx_timeout = 0;
     Serial.println("No data received: timeout");
+    output = "Fail";
   }
   else
   {
     rx_timeout = 0;
     Serial.println("BMS data received!");
+    output = "Succes";
 
     while (Serial1.available() > 0)
     {
@@ -145,74 +164,119 @@ string GetSerialData(string input)
 
     remove(serial_str.begin(), serial_str.end(), ' ');
     //serial_str.resize(2040);
-
-    if (input[0] == 't')
-    {
-      // Cell temperature
-      size_t celltemp_idx = serial_str.find("-7f") + 21;
-      if (serial_str[celltemp_idx] == '-')
-        celltemp = stof(serial_str.substr(celltemp_idx, celltemp_idx + 4));
-      if (serial_str[celltemp_idx] == '.')
-        celltemp = stof(serial_str.substr(celltemp_idx, celltemp_idx + 2));
-      if (serial_str[celltemp_idx] != '-' || serial_str[celltemp_idx] != '.')
-        celltemp = stof(serial_str.substr(celltemp_idx, celltemp_idx + 4));
-
-      // Total voltage
-      size_t vtot_idx = serial_str.find("Vtot") + 5;
-      vtot = 0;
-      vtot = stof(serial_str.substr(vtot_idx, vtot_idx + 6));
-
-      // SOC
-      size_t stateofcharge_idx = serial_str.find("SOC") + 4;
-      stateofcharge = 0;
-      stateofcharge = stof(serial_str.substr(stateofcharge_idx, stateofcharge_idx + 4));
-
-      // Current Sensor
-      size_t lemsensor_idx = serial_str.find("LEM") + 4;
-      lemsensor = 0;
-      lemsensor = stof(serial_str.substr(lemsensor_idx, lemsensor_idx + 4));
-
-      // Min and max cell voltages
-      size_t vmin_idx = 0, vmax_idx = 0;
-      if (serial_str.find("Vmin") != -1 && serial_str.find("Vmax") != -1)
-      {
-        vmin_idx = serial_str.find("Vmin:") + 5;
-        vmax_idx = serial_str.find("Vmax:") + 5;
-      }
-      if (serial_str.find("Shunt") != -1) // Shunt is similar to vmax
-      {
-        vmin_idx = serial_str.find("Vmed:") + 5;
-        vmax_idx = serial_str.find("Shunt:") + 6;
-      }
-      vmin = 0;
-      vmax = 0;
-      vmin = stof(serial_str.substr(vmin_idx, vmin_idx + 5));
-      vmax = stof(serial_str.substr(vmax_idx, vmax_idx + 5));
-
-      Serial.print("vmin: ");
-      Serial.println(vmin);
-      Serial.print("vmax: ");
-      Serial.println(vmax);
-      Serial.print("vtot: ");
-      Serial.println(vtot);
-      Serial.print("Temperature: ");
-      Serial.println(celltemp);
-      Serial.print("State of Charge: ");
-      Serial.println(stateofcharge);
-      Serial.print("Current sensor: ");
-      Serial.println(lemsensor);
-      output = "Succes";
-    }
-
-    if (input[0] == 'd')
-    {
-      dissipated_energy = 0;
-      size_t dissipated_energy_idx = serial_str.find("dissipata") + 9;
-      dissipated_energy = stof(serial_str.substr(dissipated_energy_idx, dissipated_energy_idx + 6));
-      output = "Succes";
-    }
   }
 
+  return output;
+}
+
+string ParseStringData()
+{
+  string output;
+
+  if (GetSerialData() == "Succes")
+  {
+    // Cell temperature
+    size_t celltemp_idx = serial_str.find("-7f") + 21;
+    if (serial_str[celltemp_idx] == '-')
+      celltemp = stof(serial_str.substr(celltemp_idx, celltemp_idx + 4));
+    if (serial_str[celltemp_idx] == '.')
+      celltemp = stof(serial_str.substr(celltemp_idx, celltemp_idx + 2));
+    if (serial_str[celltemp_idx] != '-' || serial_str[celltemp_idx] != '.')
+      celltemp = stof(serial_str.substr(celltemp_idx, celltemp_idx + 4));
+
+    // Total voltage
+    size_t vtot_idx = serial_str.find("Vtot") + 5;
+    vtot = 0;
+    vtot = stof(serial_str.substr(vtot_idx, vtot_idx + 6));
+
+    // SOC
+    size_t stateofcharge_idx = serial_str.find("SOC") + 4;
+    stateofcharge = 0;
+    stateofcharge = stof(serial_str.substr(stateofcharge_idx, stateofcharge_idx + 4));
+
+    // Current Sensor
+    size_t lemsensor_idx = serial_str.find("LEM") + 4;
+    lemsensor = 0;
+    lemsensor = stof(serial_str.substr(lemsensor_idx, lemsensor_idx + 4));
+
+    // Min and max cell voltages
+    size_t vmin_idx = 0, vmax_idx = 0;
+    if (serial_str.find("Vmin") != -1 && serial_str.find("Vmax") != -1)
+    {
+      vmin_idx = serial_str.find("Vmin:") + 5;
+      vmax_idx = serial_str.find("Vmax:") + 5;
+    }
+    if (serial_str.find("Shunt") != -1) // Shunt is similar to vmax
+    {
+      vmin_idx = serial_str.find("Vmed:") + 5;
+      vmax_idx = serial_str.find("Shunt:") + 6;
+    }
+    vmin = 0;
+    vmax = 0;
+    vmin = stof(serial_str.substr(vmin_idx, vmin_idx + 5));
+    vmax = stof(serial_str.substr(vmax_idx, vmax_idx + 5));
+
+    if (serial_str.find("Equilibratura") != -1)
+    {
+      is_balancing = true;
+    }
+
+    if (vmax >= 4.15 && stateofcharge == 70 && vmin > 4.10 && vtot > 295)
+    {
+      if (is_balancing == false)
+      {
+        endofcharge == true;
+      }
+      if (is_balancing == true && balancing_power == 0)
+      {
+        endofcharge == true;
+      }
+    }
+
+    Serial.print("vmin: ");
+    Serial.println(vmin);
+    Serial.print("vmax: ");
+    Serial.println(vmax);
+    Serial.print("vtot: ");
+    Serial.println(vtot);
+    Serial.print("Temperature: ");
+    Serial.println(celltemp);
+    Serial.print("State of Charge: ");
+    Serial.println(stateofcharge);
+    Serial.print("Current sensor: ");
+    Serial.println(lemsensor);
+    output = "Succes";
+  }
+  else
+  {
+    output = "Fail";
+  }
+
+  if (is_balancing == true)
+  {
+    if (GetSerialData("d") == "Succes") // balancing data
+    {
+      balanced_capacity = 0;
+      balancing_power = 0;
+
+      size_t balanced_capacity_idx = serial_str.find("dissipata") + 9;
+      balanced_capacity = stof(serial_str.substr(balanced_capacity_idx, balanced_capacity_idx + 6));
+
+      size_t balancing_power_idx = serial_str.find("istantanea") + 10;
+      balancing_power = stof(serial_str.substr(balancing_power_idx, balancing_power_idx + 4));
+
+      Serial.print("Balancing Power: ");
+      Serial.println(balancing_power);
+      Serial.print("Balanced Capacity: ");
+      Serial.println(balanced_capacity);
+
+      output = "Succes";
+    }
+    else
+    {
+      output = "Fail";
+    }
+  }
   return output;
 }
 
@@ -245,7 +309,7 @@ void ControlCharger(bool charger_on)
     charger_duty = 0;
 
   /* Balancing */
-  if (dissipated_energy > WH_DISSIPATED_MAX)
+  if (balanced_capacity > WH_DISSIPATED_MAX)
     charger_duty = 0;
 
   if ((charger_duty > 0 && charger_duty < 100) || charger_duty < 0)
@@ -265,12 +329,10 @@ void ControlCharger(bool charger_on)
 
   if (charger_on = true)
   {
-      ledcWrite(chargerpwm_ch, charger_duty);
+    ledcWrite(chargerpwm_ch, charger_duty);
   }
-  else 
+  else
   {
-      ledcWrite(chargerpwm_ch, 0);
+    ledcWrite(chargerpwm_ch, 0);
   }
-
-  
 }

@@ -1,5 +1,4 @@
 /.pio
-/.vs
 /.vscode
 /include/credentials.h
 test/**

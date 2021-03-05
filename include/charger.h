@@ -3,9 +3,10 @@
 
 #include <string>
 
-void ControlCharger(bool charger_on = true);
 std::string GetSerialData(std::string input = "t");
-void dataLogger(std::string event = "normal");
+std::string ParseStringData();
+void ControlCharger(bool charger_on = true);
+void dataLogger();
 
 /* Limits */
 extern const float CELLTEMP_MIN;

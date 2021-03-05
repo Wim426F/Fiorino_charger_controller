@@ -73,7 +73,7 @@ void setup()
   ledcAttachPin(GPIO_NUM_16, unlock_high);
   ledcAttachPin(GPIO_NUM_17, unlock_low);
   delay(1000);
-  if (GetSerialData("t") == "Succes")
+  if (GetSerialData() == "Succes")
   {
     ControlCharger();
   } else
@@ -90,12 +90,12 @@ void loop()
 
   evse_on = gpio_get_level(EVSE);
   evse_on = !evse_on;
-  soclim = gpio_get_level(CHARGER_LIMITED);
+  charge_limited = gpio_get_level(CHARGER_LIMITED);
 
   if (since_int1 > int1)
   {
     Serial.println("\n\nGetting Data");
-    if (GetSerialData("t") == "Succes")
+    if (GetSerialData() == "Succes")
     {
       ControlCharger();
     }
@@ -103,9 +103,8 @@ void loop()
     {
       ControlCharger(false);
     }
-    if (vmax >= 4.15 && stateofcharge == 70 && vmin > 4.10 && vtot > 295)
+    if (endofcharge == true && is_balancing == false);
     {
-      dataLogger("endofcharge");
       esp_light_sleep_start();
     }
     since_int1 = since_int1 - int1;

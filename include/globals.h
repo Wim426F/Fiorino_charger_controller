@@ -24,13 +24,15 @@ extern float lemsensor;
 extern float vmin;
 extern float vmax;
 extern float vtot;
-extern float dissipated_energy;
+extern float balanced_capacity;
+extern float balancing_power;
 extern float status;
 extern float charger_duty;
 
 extern bool endofcharge;
 extern bool evse_on;
-extern bool soclim;
+extern bool charge_limited;
+extern bool is_balancing;
 
 extern long time_minutes;
 extern const uint8_t chargerpwm_ch;
