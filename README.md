@@ -15,3 +15,6 @@ Controls the charger in the car with a pwm signal according to the state of the 
 
 - Supports over-the-air firmware update
 - Allows downloading of .csv logfiles
+
+
+![app](https://user-images.githubusercontent.com/67831815/110161703-0258e200-7dee-11eb-914b-fd7d01ab0c24.PNG)
