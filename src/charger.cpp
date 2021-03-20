@@ -20,13 +20,16 @@ float balanced_capacity = 0;
 float status = 0;
 float charger_duty = 0;
 
+float ramp_up_exp = 5;
+float ramp_down_exp = 3;
+
 /* Limits */
 const float CELLTEMP_MIN = 0.0;
 const float CELLTEMP_PREFERRED = 10.0;
 const float CELLTEMP_MAX = 45.0;
 
 const float VMIN_LIM = 3.000;
-const float VMAX_LIM_LOWER = 4.000;
+const float VMAX_LIM_LOWER = 3.900;
 const float VMAX_LIM_UPPER = 4.150;
 const float VTOT_LOW = VMIN_LIM * 72;
 const float VTOT_MAX = VMAX_LIM_UPPER * 72;
@@ -37,6 +40,7 @@ bool endofcharge = false;
 bool evse_on = false;
 bool charge_limited = false;
 bool is_balancing = false;
+bool trickle_phase = false;
 
 inline float stof(const string &_Str, size_t *_Idx = nullptr) // convert string to float
 {
@@ -54,7 +58,12 @@ inline float stof(const string &_Str, size_t *_Idx = nullptr) // convert string 
   return _Ans;
 }
 
-void dataLogger()
+float mapFloat(float x, float in_min, float in_max, float out_min, float out_max)
+{
+  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
+void dataLogger(string parameter)
 {
   if (!SD.exists("/html/index.html"))
   {
@@ -72,7 +81,7 @@ void dataLogger()
     }
   }
 
-  if (SD.totalBytes() - SD.usedBytes() < 1000)
+  if (SD.totalBytes() - SD.usedBytes() < 1000) // clean up sd card if almost full
   {
     for (int i = 0; i < logfile_nr; i++)
     {
@@ -80,45 +89,75 @@ void dataLogger()
     }
   }
 
-  if (logfile.size() > 2000000) // max file size 2MB
+  if (logfile.size() > 100000) // max file size 100kB
   {
     EEPROM.writeInt(0, logfile_nr + 1); // new file location
     logfile.close();
     logfile = SD.open("/log/logfile_" + (String)logfile_nr + ".txt", FILE_WRITE);
+    logfile.print("Time;Vmin;Vmax;Vtot;Temperature;SOC;LEM;ChargerPwm\n");
   }
 
   if (!SD.exists("/log/logfile_0.txt"))
   {
     logfile = SD.open("/log/logfile_0.txt", FILE_WRITE);
-    logfile.print("Time,Vmin,Vmax,Vtot,Temperature,SOC,LEM,ChargerPwm\n");
-    EEPROM.writeInt(0, 0);
+    logfile.println("#Logfile number: " + (String)logfile_nr + "\n");
+    logfile.print("Time;Vmin;Vmax;Vtot;Temperature;SOC;LEM;ChargerPwm\n");
+    EEPROM.writeInt(0, 0); // reset logfile number
   }
 
-  if (endofcharge == true)
+  if (!SD.exists("/log/logfile_" + (String)logfile_nr + ".txt"))
   {
-    logfile.print("\n-- Charging session finished --\n\n");
-    logfile.close();
+    logfile = SD.open("/log/logfile_" + (String)logfile_nr + ".txt", FILE_WRITE);
+    logfile.println("#Logfile number: " + (String)logfile_nr);
+    logfile.print("Time;Vmin;Vmax;Vtot;Temperature;SOC;LEM;ChargerPwm\n");
   }
 
-  static int logs_since_start = 0;
-  if (logs_since_start == 0)
+  if (!logfile.available())
   {
-    logfile.println("\n-- New charging session started --\n");
+    logfile = SD.open("/log/logfile_" + (String)logfile_nr + ".txt", FILE_APPEND);
   }
-  logs_since_start++;
 
   if (is_balancing == true)
   {
     static int i = 0;
     if (i == 0)
     {
-      logfile.println("\n-- BMS has started balancing --\n");
+      logfile.print("\n#BMS has started balancing\n");
     }
     i++;
   }
-  logfile = SD.open("/log/logfile_" + (String)logfile_nr + ".txt", FILE_APPEND);
-  logfile.print((String)time_minutes + "," + vmin + "," + vmax + "," + vtot + "," + celltemp + "," + stateofcharge + "," + lemsensor + "," + (int)charger_duty + "\n");
-  logs_since_start++;
+
+  if (parameter == "start")
+  {
+    Serial.print("\n#New charging session started\n");
+    logfile.print("\n#New charging session started\n");
+    logfile.print("Time;Vmin;Vmax;Vtot;Temperature;SOC;LEM;ChargerPwm\n");
+  }
+
+  if (parameter == "sleep")
+  {
+    logfile.print("\n#Charging session finished\n");
+  }
+  else
+  {
+    //Stupid excel formatting
+    String str_vmin = (String)vmin;
+    str_vmin.replace(".", ",");
+    String str_vmax = (String)vmax;
+    str_vmax.replace(".", ",");
+    String str_vtot = (String)vtot;
+    str_vtot.replace(".", ",");
+    String str_ctmp = (String)celltemp;
+    str_ctmp.replace(".", ",");
+    String str_soc = (String)stateofcharge;
+    str_soc.replace(".", ",");
+    String str_lem = (String)abs(lemsensor);
+    str_lem.replace(".", ",");
+
+    logfile = SD.open("/log/logfile_" + (String)logfile_nr + ".txt", FILE_APPEND);
+    logfile.print(time_minutes + ";" + str_vmin + ";" + str_vmax + ";" + str_vtot + ";" + str_ctmp + ";" + str_soc + ";" + str_lem + ";" + (int)charger_duty + "\n");
+    Serial.println(time_minutes + ";" + str_vmin + ";" + str_vmax + ";" + str_vtot + ";" + str_ctmp + ";" + str_soc + ";" + str_lem + ";" + (int)charger_duty + "\n");
+  }
 }
 
 string GetSerialData(string input)
@@ -221,15 +260,20 @@ string ParseStringData()
       is_balancing = true;
     }
 
-    if (vmax >= 4.15 && stateofcharge == 70 && vmin > 4.10 && vtot > 295)
+    if (vmax >= 4.15)
+    {
+      trickle_phase = true;
+    }
+
+    if (vmax >= 4.15 && stateofcharge == 70 && vmin > 4.12 && vtot > 297)
     {
       if (is_balancing == false)
       {
-        endofcharge == true;
+        endofcharge = true;
       }
-      if (is_balancing == true && balancing_power == 0)
+      if (is_balancing == true && balancing_power < 1 && balancing_power > 0.1)
       {
-        endofcharge == true;
+        endofcharge = true;
       }
     }
 
@@ -259,22 +303,22 @@ string ParseStringData()
       balanced_capacity = 0;
       balancing_power = 0;
 
-      size_t balanced_capacity_idx = serial_str.find("dissipata") + 9;
-      balanced_capacity = stof(serial_str.substr(balanced_capacity_idx, balanced_capacity_idx + 6));
+      if (serial_str.find("dissipata") != -1)
+      {
+        size_t balanced_capacity_idx = serial_str.find("dissipata") + 9;
+        balanced_capacity = stof(serial_str.substr(balanced_capacity_idx, balanced_capacity_idx + 6));
+        Serial.print("Balanced Capacity: ");
+        Serial.println(balanced_capacity);
+      }
 
-      size_t balancing_power_idx = serial_str.find("istantanea") + 10;
-      balancing_power = stof(serial_str.substr(balancing_power_idx, balancing_power_idx + 4));
-
-      Serial.print("Balancing Power: ");
-      Serial.println(balancing_power);
-      Serial.print("Balanced Capacity: ");
-      Serial.println(balanced_capacity);
-
+      if (serial_str.find("istantanea") != -1)
+      {
+        size_t balancing_power_idx = serial_str.find("istantanea") + 10;
+        balancing_power = stof(serial_str.substr(balancing_power_idx, balancing_power_idx + 4));
+        Serial.print("Balancing Power: ");
+        Serial.println(balancing_power);
+      }
       output = "Succes";
-    }
-    else
-    {
-      output = "Fail";
     }
   }
   return output;
@@ -286,16 +330,28 @@ void ControlCharger(bool charger_on)
   if (vmin == 0 || vmax == 0 || vtot == 0)
     charger_duty = 0;
 
-  if (vmin > 0 && vmin < VMIN_LIM)
-    charger_duty = 915 - (VMIN_LIM - vmin) * 1000 - 150;
+  if (vmin > 0 && vmin < VMIN_LIM) // ramping up
+  {
+    // map difference between max voltage limit and current voltage to 130-915 raised by an exponent of 3
+    static float in_max = pow(915 * VMIN_LIM, ramp_up_exp);
+    float ratio = pow(915 * vmin, ramp_up_exp);
 
-  if (vmin >= VMIN_LIM && vmax <= VMAX_LIM_LOWER)
-    charger_duty = 910;
+    charger_duty = mapFloat(ratio, 0, in_max, 130, 915);
+  }
 
-  if (vmin >= VMIN_LIM && vmax >= VMAX_LIM_LOWER && vmax <= VMAX_LIM_UPPER)
-    charger_duty = (VMAX_LIM_UPPER - vmax) * 3800 + 100;
+  if (vmin >= VMIN_LIM && vmax <= VMAX_LIM_LOWER) // full speed
+    charger_duty = 915;
 
-  if (vmin > VMAX_LIM_UPPER || vmax > VMAX_LIM_UPPER || vtot >= VTOT_MAX)
+  if (vmin >= VMIN_LIM && vmax >= VMAX_LIM_LOWER && vmax <= VMAX_LIM_UPPER) // ramping down
+  {
+    // map difference between max voltage limit and current voltage to 130-915 raised by an exponent of 3
+    static float in_max = pow(915 * (VMAX_LIM_UPPER - VMAX_LIM_LOWER), ramp_down_exp);
+    float ratio = pow(915 * (VMAX_LIM_UPPER - vmax), ramp_down_exp);
+
+    charger_duty = mapFloat(ratio, 0, in_max, 130, 915);
+  }
+
+  if (vmin > VMAX_LIM_UPPER || vmax > VMAX_LIM_UPPER || vtot >= VTOT_MAX) // cut-off
     charger_duty = 0;
 
   /* Temperature limits & throttling */
@@ -320,19 +376,25 @@ void ControlCharger(bool charger_on)
   /* Charger speed limits */
   if (charger_duty != 0)
   {
-    if (charger_duty < 170)
-      charger_duty = 170;
+    if (charger_duty < 130)
+      charger_duty = 130;
 
     if (charger_duty > 915)
       charger_duty = 915;
+
+    if (trickle_phase == true)
+      charger_duty = 130;
   }
 
-  if (charger_on = true)
+  if (charger_on != true)
   {
-    ledcWrite(chargerpwm_ch, charger_duty);
+    charger_duty = 0;
   }
-  else
+
+  if (endofcharge == true)
   {
-    ledcWrite(chargerpwm_ch, 0);
+    charger_duty = 0;
   }
+
+  ledcWrite(chargerpwm_ch, charger_duty);
 }

@@ -6,10 +6,8 @@
 
 void StartMdnsService();
 void StartWebServer();
-void SendSocketData();
 String outputState(int output);
 String processor(const String &var);
-void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
 
 extern IPAddress local_ip;
 extern IPAddress ap_ip;

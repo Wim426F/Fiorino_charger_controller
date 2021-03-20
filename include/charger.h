@@ -6,7 +6,7 @@
 std::string GetSerialData(std::string input = "t");
 std::string ParseStringData();
 void ControlCharger(bool charger_on = true);
-void dataLogger();
+void dataLogger(std::string sleep = "");
 
 /* Limits */
 extern const float CELLTEMP_MIN;

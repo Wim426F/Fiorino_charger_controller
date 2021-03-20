@@ -11,12 +11,18 @@ extern const char *dns_hostname;
 extern const char *http_username;
 extern const char *http_password;
 
-const char *PARAM_INPUT_1 = "function";
+const char *PARAM_1 = "function";
+const char *PARAM_2 = "command";
+
+String str_vmin;
+String str_vmax;
+String str_vtot;
+String str_ctmp;
+String str_soc;
+String str_lem;
 
 MDNSResponder mdns;
 AsyncWebServer server(80);
-AsyncWebSocket ws("/ws");
-AsyncWebSocketClient *globalClient = NULL;
 
 IPAddress local_ip(192, 168, 1, 173);
 IPAddress ap_ip(192, 168, 4, 22);
@@ -30,89 +36,113 @@ int wifi_timeout = 0;
 
 void StartMdnsService()
 {
-  //set hostname
-  if (!MDNS.begin(dns_hostname))
+  mdns.addService("http", "tcp", 80);
+
+  if (!mdns.begin(dns_hostname))
   {
     Serial.println("Error setting up MDNS responder!");
   }
-  MDNS.addService("http", "tcp", 80);
+  else
+  {
+    Serial.println((String) "mdns: http://" + dns_hostname + ".local");
+  }
 }
 
 void StartWebServer()
 {
-  ws.onEvent(onWsEvent);
-  server.addHandler(&ws);
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-    File page = SD.open("/html/index.html", "r"); // read file from filesystem
+    File page = SD.open("/html/index.html", FILE_READ); // read file from filesystem
     request->send(page, "/index.html", "text/html", false, processor);
   });
+
   server
       .on("/update", HTTP_GET, [](AsyncWebServerRequest *request) {
-        File page = SD.open("/html/update.html", "r"); // read file from filesystem
+        File page = SD.open("/html/update.html", FILE_READ); // read file from filesystem
         request->send(page, "/update", "text/html");
       })
       .setAuthentication(http_username, http_password);
+
   server.on("/parameters", HTTP_GET, [](AsyncWebServerRequest *request) {
-    File page = SD.open("/html/parameters.html", "r");
+    File page = SD.open("/html/parameters.html", FILE_READ);
     request->send(page, "/parameters.html", "text/html");
   });
+
+  server.on("/serialport", HTTP_GET, [](AsyncWebServerRequest *request) {
+    File page = SD.open("/html/serialport.html", FILE_READ);
+    request->send(page, "/serialport.html", "text/html");
+    String inputparam;
+    // GET input1 value on fiorino.local/serialport?function=<>
+    if (request->hasParam(PARAM_2))
+    {
+      inputparam = request->getParam(PARAM_2)->value();
+      Serial.println(inputparam);
+    }
+    });
+
   server.on("/datalog", HTTP_GET, [](AsyncWebServerRequest *request) {
-    File page = SD.open("/html/datalog.html", "r");
-    File logfile;
+    File page = SD.open("/html/datalog.html", FILE_READ);
     request->send(page, "/datalog", "text/html", false, processor);
     String inputparam;
     // GET input1 value on fiorino.local/datalog?function=<delete>
-    if (request->hasParam(PARAM_INPUT_1))
+    if (request->hasParam(PARAM_1))
     {
-      inputparam = request->getParam(PARAM_INPUT_1)->value();
+      inputparam = request->getParam(PARAM_1)->value();
     }
     if (inputparam == "delete")
     {
-      logfile = SD.open("/log/logfile_" + (String)logfile_nr + ".txt", "w");
+      Serial.println("file deleted");
+      logfile = SD.open("/log/logfile_" + (String)logfile_nr + ".txt", FILE_WRITE);
       logfile.print("");
-      logfile.close();
+      request->send(200);
     }
   });
-  server.on("/logdownload", HTTP_GET, [](AsyncWebServerRequest *request) {
-    File page = SD.open("/log/logfile_" + (String)logfile_nr + ".txt", "r");
-    request->send(page, "/logfile", "text/plain", true);
-  });
+
   server.on("/logfile", HTTP_GET, [](AsyncWebServerRequest *request) {
-    File page = SD.open("/log/logfile_" + (String)logfile_nr + ".txt", "r");
+    File page = SD.open("/log/logfile_" + (String)logfile_nr + ".txt", FILE_READ);
     request->send(page, "/logfile", "text/plain", false);
   });
-  server.on("/test", HTTP_GET, [](AsyncWebServerRequest *request) {
-    File page = SD.open("/html/test.html", "r");
-    request->send(page, "/test", "text/html", false, processor);
-  });
+
   server.on("/pureknob.js", HTTP_GET, [](AsyncWebServerRequest *request) {
-    File page = SD.open("/js/pureknob.js", "r");
+    File page = SD.open("/js/pureknob.js", FILE_READ);
     request->send(page, "/pureknob.js", "text/javascript");
   });
+
   server.on("/style.css", HTTP_GET, [](AsyncWebServerRequest *request) {
-    File page = SD.open("/css/style.css", "r");
+    File page = SD.open("/css/style.css", FILE_READ);
     request->send(page, "/style.css", "text/css");
   });
+
   server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request) {
-    File page = SD.open("/etc/favicon.ico", "r");
+    File page = SD.open("/etc/favicon.ico", FILE_READ);
     request->send(page, "/favicon.ico", "image/vnd.microsoft.icon");
   });
+
+  server.on("/vmin", HTTP_GET, [](AsyncWebServerRequest *request) {
+    Serial.println(str_vmin);
+    request->send_P(200, "text/plain", str_vmin.c_str());
+  });
+  server.on("/vmax", HTTP_GET, [](AsyncWebServerRequest *request) {
+    Serial.println(str_vmax);
+    request->send_P(200, "text/plain", str_vmax.c_str());
+  });
+  server.on("/vtot", HTTP_GET, [](AsyncWebServerRequest *request) {
+    Serial.println(str_vtot);
+    request->send_P(200, "text/plain", str_vtot.c_str());
+  });
+  server.on("/temp", HTTP_GET, [](AsyncWebServerRequest *request) {
+    Serial.println(str_ctmp);
+    request->send_P(200, "text/plain", str_ctmp.c_str());
+  });
+  server.on("/soc", HTTP_GET, [](AsyncWebServerRequest *request) {
+    Serial.println(str_soc);
+    request->send_P(200, "text/plain", str_soc.c_str());
+  });
+  server.on("/amps", HTTP_GET, [](AsyncWebServerRequest *request) {
+    Serial.println(str_lem);
+    request->send_P(200, "text/plain", str_lem.c_str());
+  });
+
   server.begin();
-}
-
-void SendSocketData()
-{
-  String vmin_json = "{\"vmin\":";
-  vmin_json += vmin;
-  vmin_json += "}";
-
-  String vmax_json = "{\"vmax\":";
-  vmax_json += vmax;
-  vmax_json += "}";
-
-  String celltemp_json = "{\"celltemp\":";
-  celltemp_json += celltemp;
-  celltemp_json += "}";
 }
 
 String outputState(int output)
@@ -162,22 +192,7 @@ String processor(const String &var)
     buttons += "<b class=\"textstyle\">";
     buttons += (String)charger_duty;
     buttons += "</b>";
-
-    //buttons += "<label class=\"button\"><input value=\"Download\" type=\"button\" oncick=\"editlog(this)\" id=\"download\" " + outputState(2) + "></label>";
-    buttons += "<label class=\"button\"><input value=\"Delete\" type=\"button\" onclick=\"editlog(this)\" id=\"delete\" " + outputState(4) + "></label>";
     return buttons;
   }
   return String();
-}
-
-void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len)
-{
-  if (type == WS_EVT_CONNECT)
-  {
-    Serial.println("WebSocket Client connected!");
-  }
-  else if (type == WS_EVT_DISCONNECT)
-  {
-    Serial.println("Websocket Client disconnected!");
-  }
 }

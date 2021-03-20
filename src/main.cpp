@@ -10,8 +10,8 @@ void LockEvse(bool lock_evse);
 /* Timers */
 elapsedMillis since_int1 = 0;
 elapsedMillis since_int2 = 0;
-const long int1 = 10000;  //bms request interval
-const long int2 = 120000; // every 2 minutes
+long int1 = 2000;   //bms request interval
+long int2 = 120000; // every 2 minutes
 int counter;
 long time_minutes = 0;
 
@@ -72,19 +72,38 @@ void setup()
   ledcAttachPin(GPIO_NUM_22, lock_low);
   ledcAttachPin(GPIO_NUM_16, unlock_high);
   ledcAttachPin(GPIO_NUM_17, unlock_low);
-  delay(1000);
-  if (GetSerialData() == "Succes")
+  ledcWrite(chargerpwm_ch, 250);
+  delay(500);
+  /*
+  if (ParseStringData() == "Succes")
   {
     ControlCharger();
-  } else
-  {
-    ControlCharger(false); //turn of charger
-  }
+  } 
+  dataLogger("start"); */
+  vmin = 4.10;
+  vmax = 4.12;
+  vtot = 293;
+  lemsensor = -14.23;
+  celltemp = 6.52;
+  stateofcharge = 65;
 }
 
 void loop()
 {
   ArduinoOTA.handle();
+
+  vmin = 4.10;
+  vmax = 4.12;
+  vtot = 293;
+  lemsensor = -14.23;
+  celltemp = 6.52;
+  stateofcharge = 65;
+  str_vmin = (String)vmin;
+  str_vmax = (String)vmax;
+  str_vtot = (String)vtot;
+  str_ctmp = (String)celltemp;
+  str_soc = (String)stateofcharge;
+  str_lem = (String)lemsensor;
 
   time_minutes = millis() / 60000; // time in minutes
 
@@ -95,7 +114,7 @@ void loop()
   if (since_int1 > int1)
   {
     Serial.println("\n\nGetting Data");
-    if (GetSerialData() == "Succes")
+    if (ParseStringData() == "Succes" && endofcharge == false)
     {
       ControlCharger();
     }
@@ -103,11 +122,20 @@ void loop()
     {
       ControlCharger(false);
     }
-    if (endofcharge == true && is_balancing == false);
+
+    if (endofcharge == true && is_balancing == false)
     {
-      esp_light_sleep_start();
+      ControlCharger(false);
+      dataLogger("sleep");
+      esp_light_sleep_start(); 
+
+    } 
+    if (trickle_phase == true)
+    {
+      int1 = 30000; // too frequent refreshing data during trickle phase doesn't work
     }
-    since_int1 = since_int1 - int1;
+
+    since_int1 -= int1;
   }
 
   if (since_int2 > int2)
