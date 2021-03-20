@@ -74,12 +74,12 @@ void setup()
   ledcAttachPin(GPIO_NUM_17, unlock_low);
   ledcWrite(chargerpwm_ch, 250);
   delay(500);
-  /*
+  
   if (ParseStringData() == "Succes")
   {
     ControlCharger();
   } 
-  dataLogger("start"); */
+  dataLogger("start"); 
   vmin = 4.10;
   vmax = 4.12;
   vtot = 293;
