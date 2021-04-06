@@ -75,10 +75,6 @@ void dataLogger(string parameter)
     {
       Serial.println("SD card reinitialized");
     }
-    else
-    {
-      Serial.println("Failed to reinitialize SD card");
-    }
   }
 
   if (SD.totalBytes() - SD.usedBytes() < 1000) // clean up sd card if almost full
@@ -95,6 +91,7 @@ void dataLogger(string parameter)
     logfile.close();
     logfile = SD.open("/log/logfile_" + (String)logfile_nr + ".txt", FILE_WRITE);
     logfile.print("Time;Vmin;Vmax;Vtot;Temperature;SOC;LEM;ChargerPwm\n");
+    logfile.close();
   }
 
   if (!SD.exists("/log/logfile_0.txt"))
@@ -102,14 +99,16 @@ void dataLogger(string parameter)
     logfile = SD.open("/log/logfile_0.txt", FILE_WRITE);
     logfile.println("#Logfile number: " + (String)logfile_nr + "\n");
     logfile.print("Time;Vmin;Vmax;Vtot;Temperature;SOC;LEM;ChargerPwm\n");
+    logfile.close();
     EEPROM.writeInt(0, 0); // reset logfile number
   }
 
-  if (!SD.exists("/log/logfile_" + (String)logfile_nr + ".txt"))
+  if (!SD.exists("/log/logfile_" + (String)logfile_nr + ".txt") || parameter == "clear")
   {
     logfile = SD.open("/log/logfile_" + (String)logfile_nr + ".txt", FILE_WRITE);
     logfile.println("#Logfile number: " + (String)logfile_nr);
     logfile.print("Time;Vmin;Vmax;Vtot;Temperature;SOC;LEM;ChargerPwm\n");
+    logfile.close();
   }
 
   if (!logfile.available())
@@ -134,7 +133,7 @@ void dataLogger(string parameter)
     logfile.print("Time;Vmin;Vmax;Vtot;Temperature;SOC;LEM;ChargerPwm\n");
   }
 
-  if (parameter == "sleep")
+  if (parameter == "finished")
   {
     logfile.print("\n#Charging session finished\n");
   }
@@ -153,10 +152,11 @@ void dataLogger(string parameter)
     str_soc.replace(".", ",");
     String str_lem = (String)abs(lemsensor);
     str_lem.replace(".", ",");
+    String str_time_minutes = (String)time_minutes;
 
     logfile = SD.open("/log/logfile_" + (String)logfile_nr + ".txt", FILE_APPEND);
-    logfile.print(time_minutes + ";" + str_vmin + ";" + str_vmax + ";" + str_vtot + ";" + str_ctmp + ";" + str_soc + ";" + str_lem + ";" + (int)charger_duty + "\n");
-    Serial.println(time_minutes + ";" + str_vmin + ";" + str_vmax + ";" + str_vtot + ";" + str_ctmp + ";" + str_soc + ";" + str_lem + ";" + (int)charger_duty + "\n");
+    logfile.print(str_time_minutes + ";" + str_vmin + ";" + str_vmax + ";" + str_vtot + ";" + str_ctmp + ";" + str_soc + ";" + str_lem + ";" + (int)charger_duty + "\n");
+    Serial.println(str_time_minutes + ";" + str_vmin + ";" + str_vmax + ";" + str_vtot + ";" + str_ctmp + ";" + str_soc + ";" + str_lem + ";" + (int)charger_duty + "\n");
   }
 }
 
@@ -265,13 +265,13 @@ string ParseStringData()
       trickle_phase = true;
     }
 
-    if (vmax >= 4.15 && stateofcharge == 70 && vmin > 4.12 && vtot > 297)
+    if (vmax >= 4.15 && stateofcharge == 70 && vmin > 4.15 && vtot > 298)
     {
       if (is_balancing == false)
       {
         endofcharge = true;
       }
-      if (is_balancing == true && balancing_power < 1 && balancing_power > 0.1)
+      if (is_balancing == true && balancing_power > 0.1 && balancing_power < 1)
       {
         endofcharge = true;
       }
@@ -326,10 +326,6 @@ string ParseStringData()
 
 void ControlCharger(bool charger_on)
 {
-  /* Voltage limits & throttling */
-  if (vmin == 0 || vmax == 0 || vtot == 0)
-    charger_duty = 0;
-
   if (vmin > 0 && vmin < VMIN_LIM) // ramping up
   {
     // map difference between max voltage limit and current voltage to 130-915 raised by an exponent of 3
@@ -366,27 +362,27 @@ void ControlCharger(bool charger_on)
 
   /* Balancing */
   if (balanced_capacity > WH_DISSIPATED_MAX)
-    charger_duty = 0;
-
-  if ((charger_duty > 0 && charger_duty < 100) || charger_duty < 0)
   {
     charger_duty = 0;
   }
-
+    
   /* Charger speed limits */
   if (charger_duty != 0)
   {
-    if (charger_duty < 130)
-      charger_duty = 130;
-
-    if (charger_duty > 915)
-      charger_duty = 915;
-
     if (trickle_phase == true)
+    {
       charger_duty = 130;
+    }
+    charger_duty = constrain(charger_duty, 130, 915);
   }
 
-  if (charger_on != true)
+  /* Voltage limits & throttling */
+  if (vmin == 0 || vmax == 0 || vtot == 0)
+  {
+    charger_duty = 0;
+  }
+
+  if (charger_on == false)
   {
     charger_duty = 0;
   }

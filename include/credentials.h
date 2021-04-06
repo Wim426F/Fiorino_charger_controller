@@ -2,14 +2,12 @@
 #define CREDENTIALS_H_
 
 /* Connectivity */
-const char *sta_ssid = "";
-const char *sta_password = "";
 const char *ap_ssid = "Fiorino";
-const char *ap_password = "";
+const char *password = "3VLS042020";
 const char *ota_hostname = "FIORINO_ESP32";
-const char *ota_password = "";
 const char *dns_hostname = "fiorino";
-const char *http_username = "";
-const char *http_password = "";
+const char *http_username = "3vls04";
+const char *http_password = "f!0r!n0";
+
 
 #endif

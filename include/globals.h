@@ -43,7 +43,7 @@ extern bool charge_limited;
 extern bool is_balancing;
 extern bool trickle_phase;
 
-extern long time_minutes;
+extern int time_minutes;
 extern const uint8_t chargerpwm_ch;
 
 #endif

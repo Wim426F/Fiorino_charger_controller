@@ -1,12 +1,13 @@
 #include <web_server.h>
+#include <charger.h>
 
 /* Connectivity */
 extern const char *sta_ssid;
 extern const char *sta_password;
 extern const char *ap_ssid;
-extern const char *ap_password;
+extern const char *password;
 extern const char *ota_hostname;
-extern const char *ota_password;
+extern const char *password;
 extern const char *dns_hostname;
 extern const char *http_username;
 extern const char *http_password;
@@ -23,14 +24,10 @@ String str_lem;
 
 MDNSResponder mdns;
 AsyncWebServer server(80);
-
-IPAddress local_ip(192, 168, 1, 173);
 IPAddress ap_ip(192, 168, 4, 22);
 IPAddress gateway(192, 168, 4, 9);
 IPAddress subnet(255, 255, 255, 0);
 
-int ssid_hidden = 0;
-int max_connection = 3;
 int available_networks = 0;
 int wifi_timeout = 0;
 
@@ -91,8 +88,7 @@ void StartWebServer()
     if (inputparam == "delete")
     {
       Serial.println("file deleted");
-      logfile = SD.open("/log/logfile_" + (String)logfile_nr + ".txt", FILE_WRITE);
-      logfile.print("");
+      dataLogger("clear");
       request->send(200);
     }
   });
@@ -143,18 +139,6 @@ void StartWebServer()
   });
 
   server.begin();
-}
-
-String outputState(int output)
-{
-  if (evse_on)
-  {
-    return "checked";
-  }
-  else
-  {
-    return "";
-  }
 }
 
 String processor(const String &var)

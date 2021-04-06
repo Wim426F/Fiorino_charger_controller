@@ -7,13 +7,16 @@
 
 void LockEvse(bool lock_evse);
 
+using namespace std;
+
 /* Timers */
 elapsedMillis since_int1 = 0;
 elapsedMillis since_int2 = 0;
-long int1 = 2000;   //bms request interval
-long int2 = 120000; // every 2 minutes
+elapsedSeconds since_start = 0;
+long int1 = 1000;   //bms request interval
+long int2 = 120000; // 2 min, datalogger interval
 int counter;
-long time_minutes = 0;
+int time_minutes = 0;
 
 typedef int32_t esp_err_t;
 //#define Serial1 Serial
@@ -40,19 +43,13 @@ void setup()
   Serial1.begin(115200, SERIAL_8N1, RX1, TX1);
   Serial1.setRxBufferSize(4096);
   SD.begin(SS, SPI, 80000000, "/sd", 20);
-  WiFi.mode(WIFI_AP_STA);
-  WiFi.config(local_ip, gateway, subnet);
-  WiFi.begin(sta_ssid, sta_password);
-  WiFi.setAutoReconnect(true);
+  WiFi.mode(WIFI_AP);
   WiFi.softAPConfig(ap_ip, gateway, subnet);
-  WiFi.softAP(ap_ssid, ap_password, ssid_hidden, max_connection);
-  if (WiFi.status() == WL_CONNECTED)
-  {
-    Serial.println("Wifi connected to: " + (String)sta_ssid);
-  }
+  WiFi.softAP(ap_ssid, password);
+
   //Over The Air update
   ArduinoOTA.setHostname(ota_hostname);
-  ArduinoOTA.setPassword(ota_password);
+  ArduinoOTA.setPassword(password);
   ArduinoOTA.begin();
   StartMdnsService();
   StartWebServer();
@@ -80,24 +77,12 @@ void setup()
     ControlCharger();
   } 
   dataLogger("start"); 
-  vmin = 4.10;
-  vmax = 4.12;
-  vtot = 293;
-  lemsensor = -14.23;
-  celltemp = 6.52;
-  stateofcharge = 65;
 }
 
 void loop()
 {
   ArduinoOTA.handle();
 
-  vmin = 4.10;
-  vmax = 4.12;
-  vtot = 293;
-  lemsensor = -14.23;
-  celltemp = 6.52;
-  stateofcharge = 65;
   str_vmin = (String)vmin;
   str_vmax = (String)vmax;
   str_vtot = (String)vtot;
@@ -105,7 +90,7 @@ void loop()
   str_soc = (String)stateofcharge;
   str_lem = (String)lemsensor;
 
-  time_minutes = millis() / 60000; // time in minutes
+  time_minutes = since_start / 60; // time in minutes
 
   evse_on = gpio_get_level(EVSE);
   evse_on = !evse_on;
@@ -114,11 +99,12 @@ void loop()
   if (since_int1 > int1)
   {
     Serial.println("\n\nGetting Data");
-    if (ParseStringData() == "Succes" && endofcharge == false)
+    string status = ParseStringData();
+    if (status == "Succes" && endofcharge == false)
     {
       ControlCharger();
     }
-    else
+    if (status == "Fail" && endofcharge == false)
     {
       ControlCharger(false);
     }
@@ -126,9 +112,7 @@ void loop()
     if (endofcharge == true && is_balancing == false)
     {
       ControlCharger(false);
-      dataLogger("sleep");
-      esp_light_sleep_start(); 
-
+      dataLogger("finished");
     } 
     if (trickle_phase == true)
     {
