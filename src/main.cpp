@@ -29,6 +29,7 @@ int logfile_nr = EEPROM.readInt(0);
 #define EVSE GPIO_NUM_39
 #define RX1 GPIO_NUM_35
 #define TX1 GPIO_NUM_33
+#define PWM GPIO_NUM_26
 
 /* PWM channels */
 const uint8_t chargerpwm_ch = 1;
@@ -64,7 +65,7 @@ void setup()
   ledcSetup(lock_low, 1000, 8);
   ledcSetup(unlock_high, 1000, 8);
   ledcSetup(unlock_low, 1000, 8);
-  ledcAttachPin(GPIO_NUM_26, chargerpwm_ch);
+  ledcAttachPin(PWM, chargerpwm_ch);
   ledcAttachPin(GPIO_NUM_21, lock_high);
   ledcAttachPin(GPIO_NUM_22, lock_low);
   ledcAttachPin(GPIO_NUM_16, unlock_high);
