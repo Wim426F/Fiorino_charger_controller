@@ -5,8 +5,6 @@
 #include <charger.h>
 #include <globals.h>
 
-void LockEvse(bool lock_evse);
-
 using namespace std;
 
 /* Timers */
@@ -33,10 +31,8 @@ int logfile_nr = EEPROM.readInt(0);
 
 /* PWM channels */
 const uint8_t chargerpwm_ch = 1;
-const uint8_t lock_low = 2;
-const uint8_t lock_high = 3;
-const uint8_t unlock_low = 4;
-const uint8_t unlock_high = 5;
+const uint8_t lock_evse = 3;
+const uint8_t unlock_evse = 5;
 
 void setup()
 {
@@ -60,17 +56,15 @@ void setup()
   esp_sleep_enable_uart_wakeup(1);
   esp_err_t gpio_set_pull_mode(gpio_num_t EVSE, gpio_pull_mode_t GPIO_PULLDOWN_ONLY);
   esp_err_t gpio_set_pull_mode(gpio_num_t CHARGER_LIMITED, gpio_pull_mode_t GPIO_PULLDOWN_ONLY);
+
   ledcSetup(chargerpwm_ch, 1000, 10); // channel, freq, res
-  ledcSetup(lock_high, 1000, 8);
-  ledcSetup(lock_low, 1000, 8);
-  ledcSetup(unlock_high, 1000, 8);
-  ledcSetup(unlock_low, 1000, 8);
+  ledcSetup(lock_evse, 1000, 8);
+  ledcSetup(unlock_evse, 1000, 8);
+
   ledcAttachPin(PWM, chargerpwm_ch);
-  ledcAttachPin(GPIO_NUM_21, lock_high);
-  ledcAttachPin(GPIO_NUM_22, lock_low);
-  ledcAttachPin(GPIO_NUM_16, unlock_high);
-  ledcAttachPin(GPIO_NUM_17, unlock_low);
-  ledcWrite(chargerpwm_ch, 250);
+  ledcAttachPin(GPIO_NUM_21, lock_evse);
+  ledcAttachPin(GPIO_NUM_16, unlock_evse);
+
   delay(500);
   
   if (ParseStringData() == "Succes")
@@ -84,14 +78,14 @@ void loop()
 {
   ArduinoOTA.handle();
 
+  time_minutes = since_start / 60; // time in minutes
+
   str_vmin = (String)vmin;
   str_vmax = (String)vmax;
   str_vtot = (String)vtot;
   str_ctmp = (String)celltemp;
   str_soc = (String)stateofcharge;
   str_lem = (String)lemsensor;
-
-  time_minutes = since_start / 60; // time in minutes
 
   evse_on = gpio_get_level(EVSE);
   evse_on = !evse_on;
@@ -101,6 +95,7 @@ void loop()
   {
     Serial.println("\n\nGetting Data");
     string status = ParseStringData();
+
     if (status == "Succes" && endofcharge == false)
     {
       ControlCharger();
@@ -117,7 +112,7 @@ void loop()
     } 
     if (trickle_phase == true)
     {
-      int1 = 30000; // too frequent refreshing data during trickle phase doesn't work
+      int1 = 30000; // too frequent refreshing data during trickle phase doesn't work well
     }
 
     since_int1 -= int1;
@@ -129,34 +124,16 @@ void loop()
     since_int2 -= int2;
   }
 
-  /*
   if (evse_on == true)
   {
-    LockEvse(true);
+    // H-bridge 
+    ledcWrite(unlock_evse, 200); 
+    ledcWrite(lock_evse, 0);    
   }
   else
   {
-    LockEvse(false);
-  } */
-}
-
-void LockEvse(bool state)
-{
-  if (state == true)
-  {
-    ledcWrite(unlock_high, 200); // switch P fet unlock off
-    ledcWrite(unlock_low, 0);    // switch N fet unlock off
-    delayMicroseconds(1);        // wait for fet delay & fall time
-    ledcWrite(lock_high, 0);     // switch P fet lock on
-    ledcWrite(lock_low, 200);    // switch N fet lock on
-    delayMicroseconds(1);
-  }
-  if (state == false)
-  {
-    ledcWrite(lock_high, 200);  // turn P fet lock off
-    ledcWrite(lock_low, 0);     // turn N fet lock off
-    delayMicroseconds(1);       // wait for fet delay & fall time
-    ledcWrite(unlock_high, 0);  // turn P fet unlock on
-    ledcWrite(unlock_low, 200); // turn N fet unlock on
-  }
+    // Reverse h-bridge
+    ledcWrite(lock_evse, 200);  
+    ledcWrite(unlock_evse, 0);  
+  } 
 }
