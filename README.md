@@ -14,8 +14,8 @@ Controls the charger in the car with a pwm signal according to the state of the 
 - Supports over-the-air firmware update
 - Allows downloading of .csv logfiles
 
-![Screenshot_20210403_191707_com microsoft emmx](https://user-images.githubusercontent.com/67831815/113913158-491a6d00-97dc-11eb-8e98-ac144ba9172a.jpg)
-![Screenshot_20210403_191733_com microsoft emmx](https://user-images.githubusercontent.com/67831815/113913161-49b30380-97dc-11eb-82fa-cdd1c6fd29c1.jpg)
+![Screenshot_20210403_191707_com microsoft emmx](https://user-images.githubusercontent.com/67831815/113913158-491a6d00-97dc-11eb-8e98-ac144ba9172a.jpg) ![Screenshot_20210403_191733_com microsoft emmx](https://user-images.githubusercontent.com/67831815/113913161-49b30380-97dc-11eb-82fa-cdd1c6fd29c1.jpg)
+
 
 
 **Schematic:**
