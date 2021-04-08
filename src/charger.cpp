@@ -29,7 +29,7 @@ const float CELLTEMP_PREFERRED = 10.0;
 const float CELLTEMP_MAX = 45.0;
 
 const float VMIN_LIM = 3.000;
-const float VMAX_LIM_LOWER = 3.900;
+const float VMAX_LIM_LOWER = 4.000;
 const float VMAX_LIM_UPPER = 4.150;
 const float VTOT_LOW = VMIN_LIM * 72;
 const float VTOT_MAX = VMAX_LIM_UPPER * 72;

@@ -9,8 +9,8 @@ extern const char *password;
 extern const char *ota_hostname;
 extern const char *password;
 extern const char *dns_hostname;
-extern const char *http_username;
-extern const char *http_password;
+extern const char *ap_ssid;
+extern const char *password;
 
 const char *PARAM_1 = "function";
 const char *PARAM_2 = "command";
@@ -52,12 +52,10 @@ void StartWebServer()
     request->send(page, "/index.html", "text/html", false, processor);
   });
 
-  server
-      .on("/update", HTTP_GET, [](AsyncWebServerRequest *request) {
-        File page = SD.open("/html/update.html", FILE_READ); // read file from filesystem
-        request->send(page, "/update", "text/html");
-      })
-      .setAuthentication(http_username, http_password);
+  server.on("/update", HTTP_GET, [](AsyncWebServerRequest *request) {
+    File page = SD.open("/html/update.html", FILE_READ); // read file from filesystem
+    request->send(page, "/update", "text/html");
+  });
 
   server.on("/parameters", HTTP_GET, [](AsyncWebServerRequest *request) {
     File page = SD.open("/html/parameters.html", FILE_READ);
@@ -74,7 +72,7 @@ void StartWebServer()
       inputparam = request->getParam(PARAM_2)->value();
       Serial.println(inputparam);
     }
-    });
+  });
 
   server.on("/datalog", HTTP_GET, [](AsyncWebServerRequest *request) {
     File page = SD.open("/html/datalog.html", FILE_READ);
