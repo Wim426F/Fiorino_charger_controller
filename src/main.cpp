@@ -8,11 +8,11 @@
 using namespace std;
 
 /* Timers */
-elapsedMillis since_int1 = 0;
-elapsedMillis since_int2 = 0;
+elapsedSeconds since_int1 = 0;
+elapsedSeconds since_int2 = 0;
 elapsedSeconds since_start = 0;
-long int1 = 1000;   //bms request interval
-long int2 = 120000; // 2 min, datalogger interval
+long int1 = 2;   // bms request interval
+long int2 = 240; // 2 min, datalogger interval
 int counter;
 int time_minutes = 0;
 
@@ -96,23 +96,22 @@ void loop()
     Serial.println("\n\nGetting Data");
     string status = ParseStringData();
 
-    if (status == "Succes" && endofcharge == false)
+    if (status == "Succes")
     {
       ControlCharger();
     }
-    if (status == "Fail" && endofcharge == false)
+    if (status == "Fail")
     {
       ControlCharger(false);
     }
 
-    if (endofcharge == true && is_balancing == false)
+    if (endofcharge == true)
     {
-      ControlCharger(false);
       dataLogger("finished");
     } 
     if (trickle_phase == true)
     {
-      int1 = 30000; // too frequent refreshing data during trickle phase doesn't work well
+      int1 = 20; // too frequent refreshing data during trickle phase doesn't work well
     }
 
     since_int1 -= int1;
