@@ -30,7 +30,7 @@ const float CELLTEMP_MAX = 45.0;
 
 const float VMIN_LIM = 3.000;
 const float VMAX_LIM_LOWER = 4.000;
-const float VMAX_LIM_UPPER = 4.150;
+const float VMAX_LIM_UPPER = 4.167;
 const float VTOT_LOW = VMIN_LIM * 72;
 const float VTOT_MAX = VMAX_LIM_UPPER * 72;
 const float WH_DISSIPATED_MAX = 2000.00;
@@ -255,9 +255,13 @@ string ParseStringData()
     vmin = stof(serial_str.substr(vmin_idx, vmin_idx + 5));
     vmax = stof(serial_str.substr(vmax_idx, vmax_idx + 5));
 
-    if (serial_str.find("Equilibratura") != -1)
+    if (serial_str.find("Equilibratura") != string::npos)
     {
-      is_balancing = true;
+      is_balancing = true; 
+    }
+    else
+    {
+      is_balancing = false;
     }
 
     if (vmax >= 4.15)
@@ -265,7 +269,7 @@ string ParseStringData()
       trickle_phase = true;
     }
 
-    if (vmax >= 4.15 && stateofcharge == 70 && vmin > 4.15 && vtot > 298)
+    if (vmax >= VMAX_LIM_UPPER && stateofcharge == 70 && vmin > VMAX_LIM_UPPER && vtot > VTOT_MAX)
     {
       if (is_balancing == false)
       {
