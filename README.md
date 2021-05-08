@@ -20,7 +20,7 @@ https://github.com/Wim426F/Fiorino_webserver
 ![rsz_datalog](https://user-images.githubusercontent.com/67831815/113913848-1d4bb700-97dd-11eb-995c-46b96748a67a.png)
 
 
-**Schematic:**
+**Schematic:**   
 PDF:   
 [controller.pdf](https://github.com/Wim426F/Fiorino_charger_controller/files/6445971/controller.pdf)
 
