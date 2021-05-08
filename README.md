@@ -21,5 +21,6 @@ https://github.com/Wim426F/Fiorino_webserver
 
 
 **Schematic:**
-![controller](https://user-images.githubusercontent.com/67831815/117542358-91fe5500-b018-11eb-8654-1705a5522163.png)
+
+[controller.pdf](https://github.com/Wim426F/Fiorino_charger_controller/files/6445971/controller.pdf)
 [ccu_schematic_kicad6.zip](https://github.com/Wim426F/Fiorino_charger_controller/files/6445968/ccu_schematic_kicad6.zip)
