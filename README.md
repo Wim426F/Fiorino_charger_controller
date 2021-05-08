@@ -20,6 +20,6 @@ https://github.com/Wim426F/Fiorino_webserver
 ![rsz_datalog](https://user-images.githubusercontent.com/67831815/113913848-1d4bb700-97dd-11eb-995c-46b96748a67a.png)
 
 
-
 **Schematic:**
-![Schematic_Charge controller EV_2021-04-07](https://user-images.githubusercontent.com/67831815/113912833-e2954f00-97db-11eb-976a-2fece1691816.png)
+![controller](https://user-images.githubusercontent.com/67831815/117542358-91fe5500-b018-11eb-8654-1705a5522163.png)
+[ccu_schematic_kicad6.zip](https://github.com/Wim426F/Fiorino_charger_controller/files/6445968/ccu_schematic_kicad6.zip)
