@@ -21,7 +21,7 @@ https://github.com/Wim426F/Fiorino_webserver
 
 
 **Schematic:**
-PDF: 
+PDF:   
 [controller.pdf](https://github.com/Wim426F/Fiorino_charger_controller/files/6445971/controller.pdf)
 
 KiCad 6.0(5.99) files:  
