@@ -18,7 +18,7 @@ Controls the charger in the car with a pwm signal according to the state of the 
 ![rsz_datalog](https://user-images.githubusercontent.com/67831815/113913848-1d4bb700-97dd-11eb-995c-46b96748a67a.png) 
 
 For the webserver to work, these folders have to copied to the micro-sd card: 
-https://github.com/Wim426F/Fiorino_webserver
+https://www.github.com/Wim426F/Fiorino_webserver/tree/master/  
 
 **Schematic:**   
 
