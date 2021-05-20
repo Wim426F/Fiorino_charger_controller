@@ -7,7 +7,7 @@ Controls the charger in the car with a pwm signal according to the state of the 
 - Temperature protection & throttling
 - Logs data from every charging session to a .csv file
 
-**Webpage:**
+## Webpage: 
 1. Connect to wifi network "Fiorino"
 2. Open in browser: "http://fiorino.local" or "http://192.168.4.22"
 
@@ -20,10 +20,17 @@ Controls the charger in the car with a pwm signal according to the state of the 
 For the webserver to work, these folders have to copied to the micro-sd card: 
 https://www.github.com/Wim426F/Fiorino_webserver/tree/master/  
 
-**Schematic:**   
+## Schematic:  
 
-PDF:   
-[controller.pdf](https://github.com/Wim426F/Fiorino_charger_controller/files/6445971/controller.pdf)
+### Hardware version 1.0: 
+[controller.pdf](https://github.com/Wim426F/Fiorino_charger_controller/files/6445971/controller.pdf)  
 
 KiCad 6.0(5.99) files:  
 [ccu_schematic_kicad6.zip](https://github.com/Wim426F/Fiorino_charger_controller/files/6445968/ccu_schematic_kicad6.zip)
+
+### Hardware version 2.0:  
+[controller_v2.0.pdf](https://github.com/Wim426F/Fiorino_charger_controller/files/6517892/controller_v2.0.pdf)  
+
+KiCad 6.0(5.99) files:  
+[microvett_ccu_v2.0.zip](https://github.com/Wim426F/Fiorino_charger_controller/files/6517915/microvett_ccu_v2.0.zip)
+
