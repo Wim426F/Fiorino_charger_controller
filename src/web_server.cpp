@@ -1,17 +1,6 @@
 #include <web_server.h>
 #include <charger.h>
 
-/* Connectivity */
-extern const char *sta_ssid;
-extern const char *sta_password;
-extern const char *ap_ssid;
-extern const char *password;
-extern const char *ota_hostname;
-extern const char *password;
-extern const char *dns_hostname;
-extern const char *ap_ssid;
-extern const char *password;
-
 const char *PARAM_1 = "function";
 const char *PARAM_2 = "command";
 
