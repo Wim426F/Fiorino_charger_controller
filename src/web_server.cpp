@@ -1,6 +1,11 @@
 #include <web_server.h>
 #include <charger.h>
 
+const char *ap_ssid = "Fiorino";
+const char *password = "3VLS042020";
+const char *ota_hostname = "FIORINO_ESP32";
+const char *dns_hostname = "fiorino";
+
 const char *PARAM_1 = "function";
 const char *PARAM_2 = "command";
 

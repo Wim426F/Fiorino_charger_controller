@@ -5,10 +5,11 @@
 #include <globals.h>
 
 /* Connectivity */
-const char *ap_ssid = "Fiorino";
-const char *password = "3VLS042020";
-const char *ota_hostname = "FIORINO_ESP32";
-const char *dns_hostname = "fiorino";
+
+extern const char *ap_ssid;
+extern const char *password;
+extern const char *ota_hostname;
+extern const char *dns_hostname;
 
 void StartMdnsService();
 void ConfigWebServer();
