@@ -3,11 +3,22 @@
 
 #include <string>
 
+enum BMS_REQ
+{
+    READY = 0,
+    WAITING = 1,
+    RECEIVED = 2,
+    TIMEOUT = 3,
+    PARSE_FAIL = 4,
+};
+
 /**
  * @brief	 Request data from BMS trough RS232
- * @return  "waiting", "succes", "timeout"
+ * @param    ""     Check state
+ * @param    "t"    Request cell voltages from BMS
+ * @param    "d"    Request cell balancing from BMS
  */
-std::string GetSerialData(std::string input); 
+void GetSerialData(std::string input = "");
 
 /**
  * @brief	 Parse data from to string to floats
@@ -15,6 +26,8 @@ std::string GetSerialData(std::string input);
  */
 std::string ParseStringData(std::string input);
 
+extern int uart_state;
 extern std::string serial_string;
+extern int rx_timeouts;
 
 #endif

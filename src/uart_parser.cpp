@@ -1,6 +1,6 @@
 #include <uart_parser.h>
-#include <globals.h>
 #include <charger.h>
+#include <globals.h>
 
 using namespace std;
 
@@ -9,13 +9,15 @@ string serial_string;
 
 const int rx_timeout = 7000; // millis
 int request_intv = 1000;     // update values every 1000ms
-bool rx_waiting = true;
 bool incoming = false;
-bool data_received = false;
 
-long since_answer = 0;
-long since_request = 0;
-long since_byte1 = 0;
+int uart_state = READY;
+
+unsigned long since_answer = 0;
+unsigned long since_request = 0;
+unsigned long since_byte1 = 0;
+
+int rx_timeouts = 0;
 
 inline float stof(const string &_Str, size_t *_Idx = nullptr) // convert string to float
 {
@@ -33,67 +35,91 @@ inline float stof(const string &_Str, size_t *_Idx = nullptr) // convert string 
   return _Ans;
 }
 
-string GetSerialData(string input) // returns "succes", "waiting" or "timeout"
+void GetSerialData(string input)
 {
-  static string output;
+  unsigned long time_millis = millis();
 
   if (trickle_phase == true)
   {
-    request_intv = 20000; // too frequent refreshing data during trickle phase doesn't work well
+    request_intv = 20000; // too frequent refreshing of data during trickle phase doesn't work
   }
 
-  if (rx_waiting == false && millis() - since_answer > request_intv) // send data after interval
+  if (time_millis - since_answer > request_intv && uart_state != WAITING) // set ready state after interval
   {
-    serial_string.clear();
+    uart_state = READY;
+  }
 
+  if (uart_state == READY && input != "")
+  {
     while (Serial1.available() && Serial1.read())
       ; // empty buffer again
 
     Serial1.println(input.c_str());
     Serial.println(input.c_str());
-    rx_waiting = true;
-    since_request = millis();
-    output = "waiting";
+    uart_state = WAITING;
+    since_request = time_millis;
   }
   else // wait for incoming data
   {
-    if (millis() - since_request > rx_timeout && rx_waiting == true)
+    if (time_millis - since_request > rx_timeout && uart_state == WAITING) // timeout
     {
       Serial.println("No data received: timeout");
-      data_received = false;
-      rx_waiting = false;
-      output = "timeout";
+      uart_state = TIMEOUT;
+      since_answer = time_millis;
+      rx_timeouts++;
+
+      stateofcharge = 0;
+      dc_amps = 0;
+      vmin = 0;
+      vmax = 0;
+      vtot = 0;
+      celltemp = 0;
     }
 
-    if (Serial1.available() > 0) 
+    if (Serial1.available() > 0)
     {
       if (incoming == false) // record time when first byte arrives
       {
-        since_byte1 = millis();
+        since_byte1 = time_millis;
         incoming = true;
       }
 
-      if (millis() - since_byte1 > 280) // read string from buffer 280ms after first byte
+      if (time_millis - since_byte1 > 280) // read string from buffer 280ms after first byte
       {
         while (Serial1.available() > 0)
         {
+          delayMicroseconds(72); // 1 byte takes 69us to arrive
           serial_string += char(Serial1.read());
         }
 
-        std::remove(serial_string.begin(), serial_string.end(), ' '); // remove spaces in string
+        remove(serial_string.begin(), serial_string.end(), ' '); // remove spaces in string
+        since_answer = time_millis;
 
-        data_received = true;
-        rx_waiting = false;
         incoming = false;
+        uart_state = BMS_REQ::RECEIVED;
 
-        since_answer = millis();
         Serial.println("BMS data received!");
-        ParseStringData(input);
-        output = "succes";
+        Serial.println(serial_string.c_str());
+
+        string return_state;
+        if (request_t)
+        {
+          ParseStringData("t");
+        }
+        if (request_t == false)
+        {
+          ParseStringData("d");
+        }
+
+        if (return_state == "fail") // if data is corrupt, the rs232 port is probably in use
+        {
+          uart_state = BMS_REQ::PARSE_FAIL;
+          Serial.println("Data corrupted");
+        }
       }
+      rx_timeouts = 0;
     }
   }
-  return output;
 }
 
 string ParseStringData(std::string input)
@@ -102,9 +128,16 @@ string ParseStringData(std::string input)
 
   if (input == "t")
   {
-    // Cell temperature
+    stateofcharge = 0;
+    dc_amps = 0;
+    vmin = 0;
+    vmax = 0;
+    vtot = 0;
+    celltemp = 0;
+
     if (serial_string.find("-7f") != -1)
     {
+      // Cell temperature
       size_t celltemp_idx = serial_string.find("-7f") + 21;
       if (serial_string[celltemp_idx] == '-')
         celltemp = stof(serial_string.substr(celltemp_idx, celltemp_idx + 4));
@@ -113,35 +146,32 @@ string ParseStringData(std::string input)
       if (serial_string[celltemp_idx] != '-' || serial_string[celltemp_idx] != '.')
         celltemp = stof(serial_string.substr(celltemp_idx, celltemp_idx + 4));
 
+      // Total voltage
+      size_t vtot_idx = serial_string.find("Vtot") + 5;
+      if (vtot_idx != 0)
+      {
+        vtot = stof(serial_string.substr(vtot_idx, vtot_idx + 6));
+      }
+
+      // SOC
+      size_t stateofcharge_idx = serial_string.find("SOC") + 4;
+      if (stateofcharge_idx != 0)
+      {
+        stateofcharge = stof(serial_string.substr(stateofcharge_idx, stateofcharge_idx + 4));
+      }
+
+      // Current Sensor
+      size_t lemsensor_idx = serial_string.find("LEM") + 4;
+      if (lemsensor_idx != 0)
+      {
+        dc_amps = stof(serial_string.substr(lemsensor_idx, lemsensor_idx + 4));
+      }
+
       output = "succes";
     }
     else
     {
       output = "fail";
-    }
-
-    // Total voltage
-    size_t vtot_idx = serial_string.find("Vtot") + 5;
-    vtot = 0;
-    if (vtot_idx != 0)
-    {
-      vtot = stof(serial_string.substr(vtot_idx, vtot_idx + 6));
-    }
-
-    // SOC
-    size_t stateofcharge_idx = serial_string.find("SOC") + 4;
-    stateofcharge = 0;
-    if (stateofcharge_idx != 0)
-    {
-      stateofcharge = stof(serial_string.substr(stateofcharge_idx, stateofcharge_idx + 4));
-    }
-
-    // Current Sensor
-    size_t lemsensor_idx = serial_string.find("LEM") + 4;
-    dc_amps = 0;
-    if (lemsensor_idx != 0)
-    {
-      dc_amps = stof(serial_string.substr(lemsensor_idx, lemsensor_idx + 4));
     }
 
     // Min and max cell voltages
@@ -156,8 +186,6 @@ string ParseStringData(std::string input)
       vmin_idx = serial_string.find("Vmed:") + 5;
       vmax_idx = serial_string.find("Shunt:") + 6;
     }
-    vmin = 0;
-    vmax = 0;
 
     if (vmin_idx != 0 && vmax_idx != 0)
     {
@@ -232,10 +260,6 @@ string ParseStringData(std::string input)
     }
   }
 
-  if (input != "t" && input != "d")
-  {
-    output = "fail";
-  }
-
+  serial_string.clear();
   return output;
 }
