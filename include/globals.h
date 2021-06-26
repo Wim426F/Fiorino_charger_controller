@@ -1,9 +1,12 @@
 #ifndef GLOBALS_H
 #define GLOBALS_H
 
+//#define Serial1 Serial // uncomment for test mode
+
 // libraries
 #include <Arduino.h>
 #include <ArduinoOTA.h>
+#include <ArduinoJson.h>
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <ESPAsyncWebServer.h>
@@ -47,7 +50,7 @@
 
 #define EVSE_PROX GPIO_NUM_33    // input
 #define EVSE_PILOT GPIO_NUM_35   // input
-#define EVSE_STATE_C GPIO_NUM_12  // output
+#define EVSE_STATE_C GPIO_NUM_16  // output
 
 #define CAN_TX GPIO_NUM_27
 #define CAN_RX GPIO_NUM_25
@@ -81,10 +84,14 @@ extern String str_vtot;
 extern String str_ctmp;
 extern String str_soc;
 extern String str_dc_amps;
+extern String str_max_evse_amps;
+extern String str_max_cable_amps;
 
 extern uint8_t input_s1;
 
-extern int time_minutes;
+extern long time_minutes;
+extern long time_seconds;
+extern bool request_t;
 extern const uint8_t chargerpwm_ch;
 
 #endif
