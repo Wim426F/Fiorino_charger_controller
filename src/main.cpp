@@ -102,11 +102,10 @@ void setup()
   ConfigWebServer();
   //initWebSocket();
 
-  //esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_SLOW_MEM, ESP_PD_OPTION_AUTO);
-  esp_sleep_enable_uart_wakeup(0);
-  esp_sleep_enable_uart_wakeup(1);
+  esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_SLOW_MEM, ESP_PD_OPTION_AUTO);
   esp_sleep_enable_ext0_wakeup(INPUT_S1, LOW);
   esp_sleep_enable_ext0_wakeup(EVSE_PILOT, HIGH);
+  esp_sleep_enable_ext0_wakeup(UART_RX1, HIGH);
 
   gpio_set_pull_mode(INPUT_S1, GPIO_PULLUP_ONLY);
 
@@ -181,7 +180,7 @@ void loop()
     ControlCharger(false);
   }
 
-  if (rx_timeouts > 20)
+  if (rx_timeouts > 20) //20
   {
     static bool first = true;
     if (first == true)
@@ -211,7 +210,7 @@ void loop()
     }
     prev_state = true;
   }
-  if (time_minutes - since_web_req <= 5)
+  if (time_minutes - since_web_req <= 5) // 5
   {
     webserver_active = true;
   }
@@ -225,7 +224,7 @@ void loop()
     static bool first = true;
     if (first == true)
     {
-      Serial.print("Controller inactive, entering deep sleep in 2 minutes");
+      Serial.print("Controller inactive, entering sleep in 2 minutes");
       since_inactive = time_minutes;
       first = false;
     }
@@ -243,11 +242,17 @@ void loop()
       rx_timeouts = 0;
       rx_waiting = false; */
       digitalWrite(EVSE_STATE_C, LOW);
-      esp_sleep_enable_ext0_wakeup(EVSE_PILOT, HIGH);
+      Serial1.end();
       delay(10);
-      //esp_light_sleep_start();
-      //esp_restart();
-      esp_deep_sleep_start();
+      gpio_set_direction(EVSE_PILOT, GPIO_MODE_INPUT);
+      gpio_set_direction(EVSE_PILOT, GPIO_MODE_INPUT);
+
+      esp_sleep_enable_ext0_wakeup(EVSE_PILOT, HIGH);
+      esp_sleep_enable_ext0_wakeup(UART_RX1, LOW);
+      delay(10);
+      esp_light_sleep_start();
+      esp_restart();
+      //esp_deep_sleep_start();
     }
   }
 
