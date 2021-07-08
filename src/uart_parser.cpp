@@ -87,7 +87,7 @@ void GetSerialData(string input)
       if (time_millis - since_byte1 > 280) // read string from buffer 280ms after first byte
       {
         serial_string.clear();
-        
+
         while (Serial1.available() > 0)
         {
           delayMicroseconds(72); // 1 byte takes 69us to arrive
@@ -100,7 +100,7 @@ void GetSerialData(string input)
         uart_state = BMS_REQ::RECEIVED;
 
         Serial.println("BMS data received!");
-        Serial.println(serial_string.c_str());
+        //Serial.println(serial_string.c_str());
 
         string return_state;
         if (request_t)
@@ -210,7 +210,7 @@ string ParseStringData(std::string input)
       trickle_phase = true;
     }
 
-    if (vmax >= VMAX_LIM_UPPER && stateofcharge == 70.0f && vmin >= VMAX_LIM_UPPER && vtot >= VTOT_MAX)
+    if (vmax >= VMAX_LIM_UPPER && stateofcharge == 70.0f && vmin >= (VMAX_LIM_UPPER- 0.02))
     {
       if (bms_is_balancing == false)
       {
