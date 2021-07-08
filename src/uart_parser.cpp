@@ -86,13 +86,14 @@ void GetSerialData(string input)
 
       if (time_millis - since_byte1 > 280) // read string from buffer 280ms after first byte
       {
+        serial_string.clear();
+        
         while (Serial1.available() > 0)
         {
           delayMicroseconds(72); // 1 byte takes 69us to arrive
           serial_string += char(Serial1.read());
         }
 
-        remove(serial_string.begin(), serial_string.end(), ' '); // remove spaces in string
         since_answer = time_millis;
 
         incoming = false;
@@ -126,6 +127,8 @@ string ParseStringData(std::string input)
 {
   string output;
 
+  remove(serial_string.begin(), serial_string.end(), ' '); // remove spaces in string
+
   if (input == "t")
   {
     stateofcharge = 0;
@@ -135,7 +138,7 @@ string ParseStringData(std::string input)
     vtot = 0;
     celltemp = 0;
 
-    if (serial_string.find("-7f") != -1)
+    if (serial_string.find("SOC") != -1)
     {
       // Cell temperature
       size_t celltemp_idx = serial_string.find("-7f") + 21;
