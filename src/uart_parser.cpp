@@ -8,7 +8,7 @@ using namespace std;
 string serial_string;
 
 const int rx_timeout = 7000; // millis
-int request_intv = 1000;     // update values every 1000ms
+int request_intv = 5000;     // update values every 1000ms
 bool incoming = false;
 
 int uart_state = READY;

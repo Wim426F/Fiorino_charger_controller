@@ -160,22 +160,22 @@ void loop()
     if (request_t) // switch between requesting 't' and 'd' when balancing
     {
       GetSerialData("t"); // get cell voltages from bms
+      if (bms_is_balancing)
+      {
+        request_t = false;
+      }
     }
     else
     {
       GetSerialData("d"); // get balancing data from bms
       request_t = true;
     }
-    if (bms_is_balancing)
-    {
-      request_t = false;
-    }
   }
   if (uart_state == BMS_REQ::RECEIVED)
   {
     ControlCharger();
   }
-  if (uart_state == BMS_REQ::TIMEOUT || uart_state == BMS_REQ::PARSE_FAIL)
+  else if (uart_state == BMS_REQ::TIMEOUT || uart_state == BMS_REQ::PARSE_FAIL)
   {
     ControlCharger(false);
   }
@@ -248,7 +248,7 @@ void loop()
       gpio_set_direction(EVSE_PILOT, GPIO_MODE_INPUT);
 
       esp_sleep_enable_ext0_wakeup(EVSE_PILOT, HIGH);
-      esp_sleep_enable_ext0_wakeup(UART_RX1, LOW);
+      //esp_sleep_enable_ext0_wakeup(UART_RX1, LOW);
       delay(10);
       esp_light_sleep_start();
       esp_restart();
