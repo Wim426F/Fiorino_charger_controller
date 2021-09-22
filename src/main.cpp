@@ -230,17 +230,9 @@ void loop()
     }
     if (time_minutes - since_inactive >= 2) // 2 mins after shutdown
     {
-      Serial.println("Entering deep sleep now...");
+      Serial.println("Entering sleep now...");
       Serial.flush();
       delay(50);
-      // reset some variables
-      /*
-      car_is_off = false;
-      webserver_active = true;
-      since_inactive = time_minutes;
-      since_car_is_off = time_minutes;
-      rx_timeouts = 0;
-      rx_waiting = false; */
       digitalWrite(EVSE_STATE_C, LOW);
       Serial1.end();
       delay(10);
