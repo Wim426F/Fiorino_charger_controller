@@ -219,7 +219,7 @@ void loop()
   {
     dataLogger("finished");
   }
-  if ((endofcharge || car_is_off || evse.is_plugged_in == false) && webserver_active == false)
+  if ((endofcharge || car_is_off) && webserver_active == false && evse.is_plugged_in == false) // keep alive if webserver is active and car 
   {
     static bool first = true;
     if (first == true)
@@ -236,14 +236,17 @@ void loop()
       digitalWrite(EVSE_STATE_C, LOW);
       Serial1.end();
       delay(10);
-      gpio_set_direction(EVSE_PILOT, GPIO_MODE_INPUT);
-      gpio_set_direction(EVSE_PILOT, GPIO_MODE_INPUT);
 
+      gpio_set_direction(EVSE_PILOT, GPIO_MODE_INPUT);
       esp_sleep_enable_ext0_wakeup(EVSE_PILOT, HIGH);
       //esp_sleep_enable_ext0_wakeup(UART_RX1, LOW);
       delay(10);
+
       esp_light_sleep_start();
-      esp_restart();
+      car_is_off = false;
+      since_car_is_off = time_minutes;
+
+      //esp_restart();
       //esp_deep_sleep_start();
     }
   }

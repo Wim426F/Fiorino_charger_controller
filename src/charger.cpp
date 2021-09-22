@@ -18,7 +18,7 @@ const float CELLTEMP_MAX = 45.0;
 
 const float VMIN_LIM = 3.000;
 const float VMAX_LIM_LOWER = 4.000;
-const float VMAX_LIM_UPPER = 4.160;
+const float VMAX_LIM_UPPER = 4.150;
 const float VTOT_LOW = VMIN_LIM * 72;
 const float VTOT_MAX = VMAX_LIM_UPPER * 72;
 
@@ -187,7 +187,7 @@ void dataLogger(string parameter)
 void ControlCharger(bool charger_on)
 {
   /* Voltage limits & throttling */
-  if (vmin > 0 && vmin < VMIN_LIM) // ramping up
+  if (vmin > 0.1 && vmin < VMIN_LIM) // ramping up
   {
     // map difference between max voltage limit and current voltage to 130-915 raised by an exponent of 3
     static float in_max = pow(915 * VMIN_LIM, ramp_up_exp);

@@ -200,26 +200,26 @@ string ParseStringData(std::string input)
     {
       bms_is_balancing = true;
     }
-    else
-    {
-      bms_is_balancing = false;
-    }
 
     if (vmax >= VMAX_LIM_UPPER)
     {
       trickle_phase = true;
     }
 
-    if (vmax >= VMAX_LIM_UPPER && stateofcharge == 70.0f && vmin >= (VMAX_LIM_UPPER- 0.02))
+    if (vmax >= VMAX_LIM_UPPER && stateofcharge >= 70.0 && vmin >= (VMAX_LIM_UPPER - 0.02))
     {
       if (bms_is_balancing == false)
       {
         endofcharge = true;
       }
-      if (bms_is_balancing == true && balancing_power > 0.1 && balancing_power < 1)
+      else if (bms_is_balancing == true && balancing_power > 0.1 && balancing_power < 1)
       {
         endofcharge = true;
       }
+    }
+    else if (stateofcharge < 70.0)
+    {
+      endofcharge = false;
     }
 
     Serial.print("vmin: ");
