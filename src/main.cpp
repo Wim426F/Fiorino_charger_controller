@@ -13,7 +13,7 @@ elapsedMillis since_int1 = 0;
 elapsedSeconds since_int2 = 0;
 elapsedMillis since_int3 = 0;
 
-long int1 = 30; // don't touch!!
+long int1 = 30;  // don't touch!!
 long int2 = 120; // 2 min datalogging interval
 long int3 = 500;
 long unsigned time_millis = 0;
@@ -27,9 +27,13 @@ File serialfile;
 File logfile;
 int logfile_nr = EEPROM.readInt(0);
 
+// battery heating
 float ptc_temp = 0;
 float ptc_temp_setp = 35; // degrees celsius
+bool heating_en = false;
+const float WARMUP_TEMP = 25; // heat battery up to this temperature
 
+// bms
 float celltemp = 0;
 float stateofcharge = 0;
 float dc_amps = 0;
@@ -47,6 +51,9 @@ String str_soc;
 String str_dc_amps;
 String str_max_cable_amps;
 String str_max_evse_amps;
+String str_ptc_temp;
+String str_ptc_temp_sp;
+String str_heating_en;
 
 bool car_is_off = false;
 long since_car_is_off = 0;
@@ -59,7 +66,7 @@ const uint8_t chargerpwm_ch = 1;
 const uint8_t greenled_ch = 2;
 const uint8_t ptc_ch = 3;
 
-void thermalManagement();  // take care of heating the battery
+void thermalManagement(); // take care of heating the battery
 
 void setup()
 {
@@ -96,8 +103,8 @@ void setup()
   gpio_set_direction(HB_IN2, GPIO_MODE_OUTPUT);
 
   ledcSetup(chargerpwm_ch, 1000, 10); // channel, freq, res
-  ledcSetup(greenled_ch, 1000, 8); // channel, freq, res
-  ledcSetup(ptc_ch, 1000, 8); // channel, freq, res
+  ledcSetup(greenled_ch, 1000, 8);    // channel, freq, res
+  ledcSetup(ptc_ch, 1000, 8);         // channel, freq, res
 
   ledcAttachPin(PWM, chargerpwm_ch);
   ledcAttachPin(S1_LED_GREEN, greenled_ch);
@@ -133,7 +140,16 @@ void loop()
   str_dc_amps = String(dc_amps, 3);
   str_max_cable_amps = String(evse.max_cable_amps, 0);
   str_max_evse_amps = String(evse.max_ac_amps, 1);
-
+  str_ptc_temp = String(ptc_temp, 1);
+  str_ptc_temp_sp = String(WARMUP_TEMP, 1);
+  if (heating_en)
+  {
+    str_heating_en = "true";
+  }
+  else
+  {
+    str_heating_en = "false";
+  }
 
   /*  -----  Updating data from BMS  -----  */
   if ((evse.is_plugged_in || webserver_active) && wifiserial_active == false) // only use rs232 if web is connected or when charging
@@ -193,9 +209,6 @@ void loop()
     //GetSerialData();
   }
 
-
-
-
   /*  -----  Power management  -----  */
   static bool prev_state = true;
   if (time_minutes - since_web_req > 2 && webserver_active == true) // if there was no request in the last 5 min
@@ -209,7 +222,7 @@ void loop()
     }
     prev_state = true;
   }
-  if (time_minutes - since_web_req <= 2) 
+  if (time_minutes - since_web_req <= 2)
   {
     webserver_active = true;
   }
@@ -225,7 +238,7 @@ void loop()
   }
   if (evse.is_plugged_in && car_is_off) // turn off evse if finished or car has shut down
   {
-    digitalWrite(EVSE_STATE_C, LOW); 
+    digitalWrite(EVSE_STATE_C, LOW);
   }
 
   if ((endofcharge || car_is_off) && webserver_active == false && evse.is_plugged_in == false) // keep alive if webserver is active and car is active
@@ -251,7 +264,6 @@ void loop()
       esp_sleep_enable_ext0_wakeup(UART_RX1, LOW);
       delay(10);
 
-      
       esp_light_sleep_start();
 
       /*
@@ -268,9 +280,6 @@ void loop()
     }
   }
 
-
-
-
   /*  -----  Intervals  -----  */
   if (since_int1 > int1)
   {
@@ -285,7 +294,7 @@ void loop()
     {
       dataLogger();
     }
-    
+
     since_int2 -= int2;
   }
 
@@ -296,7 +305,6 @@ void loop()
   }
 }
 
-
 void thermalManagement()
 {
   // Get ptc element temperature
@@ -304,21 +312,26 @@ void thermalManagement()
   static float R1 = 10000;
   float logR2, R2;
   static float c1 = 1.009249522e-03, c2 = 2.378405444e-04, c3 = 2.019202697e-07;
-  
+
   Vo = analogRead(INPUT_S1);
   R2 = R1 * (1023.0 / (float)Vo - 1.0);
   logR2 = log(R2);
-  ptc_temp = (1.0 / (c1 + c2*logR2 + c3*logR2*logR2*logR2));
+  ptc_temp = (1.0 / (c1 + c2 * logR2 + c3 * logR2 * logR2 * logR2));
   ptc_temp = ptc_temp - 273.15;
-  ptc_temp = (ptc_temp * 9.0)/ 5.0 + 32.0; 
-  Serial.println((String)"temp: " + ptc_temp);
-
+  ptc_temp = (ptc_temp * 9.0) / 5.0 + 32.0;
+  Serial.println((String) "temp: " + ptc_temp);
 
   static int pwm_val = 10;
   static int temp_setp_dev = 0;
 
-  if (car_is_off == false && celltemp < CELLTEMP_MIN_UPPER)
+  if (car_is_off == false && (celltemp < CELLTEMP_MIN_UPPER || heating_en)) // start heating once below treshold but don't stop once above.
   {
+    heating_en = true;
+    if (celltemp >= WARMUP_TEMP)
+    {
+      heating_en = false;
+    }
+
     temp_setp_dev = ptc_temp_setp - ptc_temp;
 
     if (temp_setp_dev < -2) // ptc is too hot
@@ -335,7 +348,7 @@ void thermalManagement()
   }
   else
   {
+    heating_en = false;
     ledcWrite(ptc_ch, 0);
   }
-
 }

@@ -88,6 +88,9 @@ extern String str_soc;
 extern String str_dc_amps;
 extern String str_max_evse_amps;
 extern String str_max_cable_amps;
+extern String str_ptc_temp;
+extern String str_ptc_temp_sp;
+extern String str_heating_en;
 
 extern uint8_t input_s1;
 

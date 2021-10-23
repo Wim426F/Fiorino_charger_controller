@@ -147,7 +147,7 @@ void ConfigWebServer()
             {
               since_web_req = time_minutes;
 
-              DynamicJsonDocument doc(220);
+              DynamicJsonDocument doc(250);
               doc["vtot"] = str_vtot;
               doc["vmax"] = str_vmax;
               doc["vmin"] = str_vmin;
@@ -155,6 +155,9 @@ void ConfigWebServer()
               doc["amps"] = str_dc_amps;
               doc["soc"] = str_soc;
               doc["pwm"] = String(charger_pwm, 0);
+              doc["ptc"] = str_ptc_temp;
+              doc["ptc_en"] = str_heating_en;
+              doc["ptc_sp"] = str_ptc_temp_sp;
 
               String jtostring;
               serializeJson(doc, jtostring);
@@ -189,6 +192,7 @@ void ConfigWebServer()
               doc["_5"] = String(CELLTEMP_MIN, 1);
               doc["_6"] = String(CELLTEMP_MIN_UPPER, 1);
               doc["_7"] = String(CELLTEMP_MAX, 1);
+              doc["_8"] = str_ptc_temp_sp;
 
               String jtostring;
               serializeJson(doc, jtostring);
