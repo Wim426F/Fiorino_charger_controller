@@ -26,6 +26,7 @@ extern const char *ota_hostname;
 extern const char *dns_hostname;
 
 extern bool webserver_active;
+extern bool wifiserial_active;
 extern unsigned long since_web_req;
 
 extern int ssid_hidden;

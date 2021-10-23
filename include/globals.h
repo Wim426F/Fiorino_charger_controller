@@ -19,6 +19,7 @@
 
 /* GPIO */
 //#define HARDWARE_VERSION_1 // uncomment to use pinout for old version
+
 #ifndef HARDWARE_VERSION_1
 #define HARDWARE_VERSION_2
 #endif
@@ -46,7 +47,7 @@
 #ifdef HARDWARE_VERSION_2
 #define INPUT_S1 GPIO_NUM_39
 #define S1_LED_GREEN GPIO_NUM_17 // green led in evse socket
-#define S2_LED_RED GPIO_NUM_4   // red led in evse socket
+#define S2_PTC_ON GPIO_NUM_4   // solid state relais for ptc heater
 
 #define EVSE_PROX GPIO_NUM_33    // input
 #define EVSE_PILOT GPIO_NUM_35   // input
@@ -66,6 +67,7 @@
 #endif
 
 extern File logfile;
+extern File serialfile;
 extern int logfile_nr;
 
 /* Variables */
@@ -91,7 +93,10 @@ extern uint8_t input_s1;
 
 extern long time_minutes;
 extern long time_seconds;
+extern unsigned long time_millis;
 extern bool request_t;
 extern const uint8_t chargerpwm_ch;
+extern const uint8_t greenled_ch;
+extern const uint8_t ptc_ch;
 
 #endif

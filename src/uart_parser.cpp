@@ -8,7 +8,7 @@ using namespace std;
 string serial_string;
 
 const int rx_timeout = 7000; // millis
-int request_intv = 5000;     // update values every 1000ms
+int request_intv = 3000;     // update values every 1000ms
 bool incoming = false;
 
 int uart_state = READY;
@@ -18,6 +18,8 @@ unsigned long since_request = 0;
 unsigned long since_byte1 = 0;
 
 int rx_timeouts = 0;
+
+void WifiSerial();
 
 inline float stof(const string &_Str, size_t *_Idx = nullptr) // convert string to float
 {
@@ -39,9 +41,9 @@ void GetSerialData(string input)
 {
   unsigned long time_millis = millis();
 
-  if (trickle_phase == true)
+  if (trickle_charge == true)
   {
-    request_intv = 20000; // too frequent refreshing of data during trickle phase doesn't work
+    request_intv = 30000; // too frequent refreshing of data during trickle phase doesn't work
   }
 
   if (time_millis - since_answer > request_intv && uart_state != WAITING) // set ready state after interval
@@ -101,6 +103,7 @@ void GetSerialData(string input)
 
         Serial.println("BMS data received!");
         //Serial.println(serial_string.c_str());
+        WifiSerial();
 
         string return_state;
         if (request_t)
@@ -203,7 +206,7 @@ string ParseStringData(std::string input)
 
     if (vmax >= VMAX_LIM_UPPER)
     {
-      trickle_phase = true;
+      trickle_charge = true;
     }
 
     if (vmax >= VMAX_LIM_UPPER && stateofcharge >= 70.0 && vmin >= (VMAX_LIM_UPPER - 0.02))
@@ -265,4 +268,30 @@ string ParseStringData(std::string input)
 
   serial_string.clear();
   return output;
+}
+
+void WifiSerial()
+{
+  if (serialfile.size() > 20000) // max file size 20kB
+  {
+    serialfile.close();
+    serialfile = SD.open("/log/serial.txt", FILE_WRITE);
+    serialfile.print("");
+    serialfile.close();
+  }
+
+  if (!SD.exists("/log/serial.txt"))
+  {
+    logfile = SD.open("/log/serial.txt", FILE_WRITE);
+    logfile.print("");
+    logfile.close();
+  }
+  else
+  {
+    serialfile = SD.open("/log/serial.txt", FILE_APPEND);
+    serialfile.println(serial_string.c_str());
+  }
+
+  
+  
 }

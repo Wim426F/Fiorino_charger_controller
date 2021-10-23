@@ -13,6 +13,7 @@ bool client_conn = false;
 StaticJsonDocument<200> jstring; // Allocate a static JSON document
 
 bool webserver_active = false;
+bool wifiserial_active = false;
 unsigned long since_web_req = 0;
 
 MDNSResponder mdns;
@@ -46,6 +47,7 @@ void ConfigWebServer()
             {
               File page = SD.open("/html/index.html", FILE_READ); // read file from filesystem
               request->send(page, "/index.html", "text/html", false);
+              wifiserial_active = false;
               since_web_req = time_minutes;
             });
   server.on("/update", HTTP_GET, [](AsyncWebServerRequest *request)
@@ -53,6 +55,7 @@ void ConfigWebServer()
               File page = SD.open("/html/update.html", FILE_READ); // read file from filesystem
               request->send(page, "/update", "text/html");
               page.close();
+              wifiserial_active = false;
               since_web_req = time_minutes;
             });
   server.on("/parameters", HTTP_GET, [](AsyncWebServerRequest *request)
@@ -60,6 +63,7 @@ void ConfigWebServer()
               File page = SD.open("/html/parameters.html", FILE_READ);
               request->send(page, "/parameters.html", "text/html");
               page.close();
+              wifiserial_active = false;
               since_web_req = time_minutes;
             });
   server.on("/serialport", HTTP_GET, [](AsyncWebServerRequest *request)
@@ -74,6 +78,7 @@ void ConfigWebServer()
                 Serial.println(inputparam);
               }
               page.close();
+              //wifiserial_active = true; 
               since_web_req = time_minutes;
             });
   server.on("/datalog", HTTP_GET, [](AsyncWebServerRequest *request)
@@ -93,6 +98,7 @@ void ConfigWebServer()
                 request->send(200);
               }
               page.close();
+              wifiserial_active = false;
               since_web_req = time_minutes;
             });
   server.on("/logfile", HTTP_GET, [](AsyncWebServerRequest *request)
@@ -101,6 +107,15 @@ void ConfigWebServer()
               request->send(page, "/logfile", "text/plain", false);
               page.close();
               since_web_req = time_minutes;
+              wifiserial_active = false;
+            });
+  server.on("/serial", HTTP_GET, [](AsyncWebServerRequest *request) // serial buffer file
+            {
+              File page = SD.open("/log/serial.txt", FILE_READ);
+              request->send(page, "/serial", "text/plain", false);
+              page.close();
+              since_web_req = time_minutes;
+              //wifiserial_active = true;
             });
   server.on("/reboot", HTTP_GET, [](AsyncWebServerRequest *request)
             { esp_restart(); });
@@ -145,6 +160,7 @@ void ConfigWebServer()
               serializeJson(doc, jtostring);
               request->send_P(200, "text/plain", jtostring.c_str());
               since_web_req = time_minutes;
+              wifiserial_active = false;
             });
   server.on("/evse", HTTP_GET, [](AsyncWebServerRequest *request)
             {
@@ -159,6 +175,7 @@ void ConfigWebServer()
               serializeJson(doc, jtostring);
               request->send_P(200, "text/plain", jtostring.c_str());
               since_web_req = time_minutes;
+              wifiserial_active = false;
             });
   server.on("/params", HTTP_GET, [](AsyncWebServerRequest *request)
             {
@@ -170,13 +187,14 @@ void ConfigWebServer()
               doc["_3"] = String(VMAX_LIM_LOWER, 3);
               doc["_4"] = String(VMAX_LIM_UPPER, 3);
               doc["_5"] = String(CELLTEMP_MIN, 1);
-              doc["_6"] = String(CELLTEMP_PREFERRED, 1);
+              doc["_6"] = String(CELLTEMP_MIN_UPPER, 1);
               doc["_7"] = String(CELLTEMP_MAX, 1);
 
               String jtostring;
               serializeJson(doc, jtostring);
               request->send_P(200, "text/plain", jtostring.c_str());
               since_web_req = time_minutes;
+              wifiserial_active = false;
             });
   server.begin();
 }

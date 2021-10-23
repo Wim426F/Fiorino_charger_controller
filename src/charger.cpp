@@ -13,7 +13,7 @@ float ramp_down_exp = 3;
 
 /* Limits */
 const float CELLTEMP_MIN = 0.0;
-const float CELLTEMP_PREFERRED = 10.0;
+const float CELLTEMP_MIN_UPPER = 10.0;
 const float CELLTEMP_MAX = 45.0;
 
 const float VMIN_LIM = 3.000;
@@ -22,14 +22,14 @@ const float VMAX_LIM_UPPER = 4.150;
 const float VTOT_LOW = VMIN_LIM * 72;
 const float VTOT_MAX = VMAX_LIM_UPPER * 72;
 
-const float CHARGER_MAX_AC_AMPS = 13; // this is required for EVSE
+const float CHARGER_MAX_AC_AMPS = 14; // this is required for EVSE
 
 String csv_header = "Time;  Vmin;   Vmax;   Vtot;   Temp;  SOC;    LEM;    PWM\n";
 
 /* Charging states */
 bool endofcharge = false;
 bool bms_is_balancing = false;
-bool trickle_phase = false;
+bool trickle_charge = false;
 
 volatile unsigned long pwm_pulse_length = 0;
 volatile unsigned long pwm_prev_time = 0;
@@ -74,7 +74,7 @@ float mapFloat(float x, float in_min, float in_max, float out_min, float out_max
 
 void dataLogger(string parameter)
 {
-  if (!SD.exists("/html/index.html"))
+  if (!SD.exists("/html/index.html")) // check if sd card is inserted
   {
     Serial.println("SD card removed!");
     SD.end();
@@ -94,93 +94,93 @@ void dataLogger(string parameter)
     }
   }
 
-  if (logfile.size() > 50000) // max file size 50kB
+  if (logfile.size() > 100000) // max file size 100kB
   {
     logfile_nr += 1;
     EEPROM.writeInt(0, logfile_nr);
+    logfile_nr = EEPROM.readInt(0);
     logfile.close();
     String filepath = "/log/logfile_" + String(logfile_nr) + ".txt"; // create new file
     logfile = SD.open(filepath, FILE_WRITE);
     logfile.println("#Logfile number: " + String(logfile_nr) + "\n");
-    logfile.print(csv_header);
     logfile.close();
   }
 
-  if (!SD.exists("/log/logfile_0.txt"))
+  if (!SD.exists("/log/logfile_0.txt")) // create logfile if none exist
   {
     logfile = SD.open("/log/logfile_0.txt", FILE_WRITE);
     logfile.println("#Logfile number: " + String(logfile_nr) + "\n");
-    logfile.print(csv_header);
     logfile.close();
     EEPROM.writeInt(0, 0); // reset logfile number
+    logfile_nr = EEPROM.readInt(0);
   }
 
-  if (!SD.exists("/log/logfile_" + String(logfile_nr) + ".txt") || parameter == "clear")
+  if (!SD.exists("/log/logfile_" + String(logfile_nr) + ".txt") || parameter == "clear") // make sure logfile_nr is correct
   {
     logfile = SD.open("/log/logfile_" + String(logfile_nr) + ".txt", FILE_WRITE);
     logfile.println("#Logfile number: " + String(logfile_nr));
-    logfile.print(csv_header);
     logfile.close();
   }
 
-  if (!logfile.available())
+  if (!logfile.available()) // 
   {
-    logfile = SD.open("/log/logfile_" + String(logfile_nr) + ".txt", FILE_APPEND);
-  }
+    logfile = SD.open("/log/logfile_" + String(logfile_nr) + ".txt", FILE_APPEND); // open file for appending data
 
-  if (parameter == "start")
-  {
-    //Serial.print("\n#New charging session started\n");
-    logfile.print("\n#New charging session started\n");
-    logfile.print(csv_header);
-  }
-  else if (parameter == "finished")
-  {
-    logfile.print("\n#Charging session finished\n");
-  }
-  else if (parameter == "")
-  {
-    //Stupid excel formatting
-    str_vmin.replace(".", ",");
-    str_vmax.replace(".", ",");
-    str_vtot.replace(".", ",");
-    str_ctmp.replace(".", ",");
-    str_soc.replace(".", ",");
-    str_dc_amps.replace(".", ",");
-    String str_time_minutes = String(time_minutes);
-    int pwm = (int)charger_pwm;
-    String str_pwm = String(pwm);
-    String str_balancing_power = String(balancing_power, 1);
-    str_balancing_power.replace(".", ",");
-    String str_balanced_capacity = String(balanced_capacity, 1);
-    str_balanced_capacity.replace(".", ",");
-
-    logfile = SD.open("/log/logfile_" + String(logfile_nr) + ".txt", FILE_APPEND);
-    logfile.print(str_time_minutes + ";     " + str_vmin + ";  " + str_vmax + ";  " + str_vtot + ";  " + str_ctmp + ";  " + str_soc + ";  " + str_dc_amps + ";  " + str_pwm);
-    logfile.print("\n");
-    logfile.flush();
-
-    if (bms_is_balancing == true)
+    if (parameter == "start")
     {
-      static int i = 0;
-      if (i == 0)
-      {
-        logfile.print("Balancing_W;  Dissipated_Wh\n");
-        i++;
-      }
-      else
-      {
-        logfile.print(str_balancing_power + ";  " + str_balanced_capacity);
-      }
+      //Serial.print("\n#New charging session started\n");
+      logfile.print("\n#New charging session started\n");
+      logfile.print(csv_header);
     }
+    else if (parameter == "finished")
+    {
+      logfile.print("\n#Charging session finished\n");
+    }
+    else if (parameter == "")
+    {
+      //Stupid excel formatting
+      str_vmin.replace(".", ",");
+      str_vmax.replace(".", ",");
+      str_vtot.replace(".", ",");
+      str_ctmp.replace(".", ",");
+      str_soc.replace(".", ",");
+      str_dc_amps.replace(".", ",");
+      String str_time_minutes = String(time_minutes);
+      int pwm = (int)charger_pwm;
+      String str_pwm = String(pwm);
+      String str_balancing_power = String(balancing_power, 1);
+      str_balancing_power.replace(".", ",");
+      String str_balanced_capacity = String(balanced_capacity, 1);
+      str_balanced_capacity.replace(".", ",");
 
-    logfile.print("\n");
-    //Serial.println(str_time_minutes + ";" + str_vmin + ";" + str_vmax + ";" + str_vtot + ";" + str_ctmp + ";" + str_soc + ";" + str_dc_amps + ";" + str_pwm + "\n");
-  }
-  else
-  {
-    string msg = "\n#" + parameter + "\n";
-    logfile.print(msg.c_str());
+      logfile = SD.open("/log/logfile_" + String(logfile_nr) + ".txt", FILE_APPEND);
+      logfile.print(str_time_minutes + ";     " + str_vmin + ";  " + str_vmax + ";  " + str_vtot + ";  " + str_ctmp + ";  " + str_soc + ";  " + str_dc_amps + ";  " + str_pwm);
+      logfile.print("\n");
+      logfile.flush();
+
+      if (bms_is_balancing == true)
+      {
+        static int i = 0;
+        if (i == 0)
+        {
+          logfile.print("Balancing_W;  Dissipated_Wh\n");
+          i++;
+        }
+        else
+        {
+          logfile.print(";  " + str_balancing_power + ";  " + str_balanced_capacity);
+        }
+      }
+
+      logfile.print("\n");
+      //Serial.println(str_time_minutes + ";" + str_vmin + ";" + str_vmax + ";" + str_vtot + ";" + str_ctmp + ";" + str_soc + ";" + str_dc_amps + ";" + str_pwm + "\n");
+    }
+    else
+    {
+      string msg = "\n#" + parameter + "\n";
+      logfile.print(msg.c_str());
+    }
+    logfile.close(); // close file after writing to prevent corruption
   }
 }
 
@@ -226,9 +226,9 @@ void ControlCharger(bool charger_on)
     charger_pwm = 0;
   }
 
-  if (celltemp < CELLTEMP_PREFERRED && celltemp > CELLTEMP_MIN) // throttle charger when temperature is lower
+  if (celltemp < CELLTEMP_MIN_UPPER && celltemp > CELLTEMP_MIN) // throttle charger when temperature is lower
   {
-    charger_pwm -= (CELLTEMP_PREFERRED - celltemp) * (charger_pwm / 20);
+    charger_pwm -= (CELLTEMP_MIN_UPPER - celltemp) * (charger_pwm / 20);
   }
 
   if (celltemp > CELLTEMP_MAX)
@@ -239,7 +239,7 @@ void ControlCharger(bool charger_on)
   /* Charger speed limits */
   if (charger_pwm > 1)
   {
-    if (trickle_phase == true)
+    if (trickle_charge == true)
     {
       charger_pwm = 130;
     }
@@ -342,26 +342,53 @@ void handleEvse()
       evse.is_waiting = false;
     }
 
-    if (trickle_phase == true) // go back to state A if charging is almost finished
+    if (trickle_charge == true) // go back to state A if charging is almost finished
     {
-      //digitalWrite(EVSE_STATE_C, LOW);
-      digitalWrite(S1_LED_GREEN, HIGH); // green led is on at ~100% battery soc
-      digitalWrite(S2_LED_RED, LOW);
+      ledcWrite(greenled_ch, 255); // turn fully on
     }
     else
     {
-      digitalWrite(S1_LED_GREEN, LOW); // Red led is on <100% battery soc
-      digitalWrite(S2_LED_RED, HIGH);
+      // fade led
+      static unsigned long last_millis = 0;
+      static bool goingup = true;
+      static bool goingdown = false;
+      static int pwm_val = 0;
+
+      if (goingup)
+      {
+        pwm_val += 7;
+
+        if (pwm_val >= 255)
+        {
+          goingdown = true;
+          goingup = false;
+        }
+      }
+
+      if (goingdown)
+      {
+        pwm_val -= 7;
+
+        if (pwm_val <= 0)
+        {
+          goingdown = false;
+          goingup = true;
+        }
+      }
+
+      constrain(pwm_val, 0, 255);
+
+      ledcWrite(greenled_ch, pwm_val);
     }
   }
   else // cable is unplugged
   {
     evse.is_plugged_in = false;
     evse.is_waiting = true; // resets evse starting sequence for next session
+    esp_restart();          // restart esp32 otherwise the current session states affect next session.
 
     ControlCharger(false); // turn off charger
     digitalWrite(S1_LED_GREEN, LOW);
-    digitalWrite(S2_LED_RED, LOW);
   }
 
   /*  -----  Control charge port actuator  -----  */

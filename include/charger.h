@@ -39,11 +39,11 @@ extern float charger_pwm;
 /* Charging states */
 extern bool endofcharge;
 extern bool bms_is_balancing;
-extern bool trickle_phase;
+extern bool trickle_charge;
 
 /* Limits */
 extern const float CELLTEMP_MIN;
-extern const float CELLTEMP_PREFERRED;
+extern const float CELLTEMP_MIN_UPPER;
 extern const float CELLTEMP_MAX;
 extern const float VMIN_LIM;
 extern const float VMAX_LIM_LOWER;
