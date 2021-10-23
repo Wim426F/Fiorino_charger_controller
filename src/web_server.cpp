@@ -155,6 +155,8 @@ void ConfigWebServer()
               doc["amps"] = str_dc_amps;
               doc["soc"] = str_soc;
               doc["pwm"] = String(charger_pwm, 0);
+              doc["balc"] = str_bal_cap;
+              doc["balp"] = str_bal_p;
               doc["ptc"] = str_ptc_temp;
               doc["ptc_en"] = str_heating_en;
               doc["ptc_sp"] = str_ptc_temp_sp;

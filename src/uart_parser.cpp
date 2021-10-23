@@ -8,7 +8,7 @@ using namespace std;
 string serial_string;
 
 const int rx_timeout = 7000; // millis
-int request_intv = 3000;     // update values every 1000ms
+int request_intv = 3000;     // update values every 3000ms
 bool incoming = false;
 
 int uart_state = READY;
@@ -108,11 +108,11 @@ void GetSerialData(string input)
         string return_state;
         if (request_t)
         {
-          ParseStringData("t");
+          return_state = ParseStringData("t");
         }
         if (request_t == false)
         {
-          ParseStringData("d");
+          return_state = ParseStringData("d");
         }
 
         if (return_state == "fail") // if data is corrupt, the rs232 port is probably in use
@@ -272,7 +272,7 @@ string ParseStringData(std::string input)
 
 void WifiSerial()
 {
-  if (serialfile.size() > 20000) // max file size 20kB
+  if (serialfile.size() > 30000) // max file size 30kB
   {
     serialfile.close();
     serialfile = SD.open("/log/serial.txt", FILE_WRITE);
@@ -288,8 +288,9 @@ void WifiSerial()
   }
   else
   {
-    serialfile = SD.open("/log/serial.txt", FILE_APPEND);
+    serialfile = SD.open("/log/serial.txt", FILE_WRITE);
     serialfile.println(serial_string.c_str());
+    serialfile.close();
   }
 
   

@@ -51,6 +51,8 @@ String str_soc;
 String str_dc_amps;
 String str_max_cable_amps;
 String str_max_evse_amps;
+String str_bal_p;
+String str_bal_cap;
 String str_ptc_temp;
 String str_ptc_temp_sp;
 String str_heating_en;
@@ -140,8 +142,11 @@ void loop()
   str_dc_amps = String(dc_amps, 3);
   str_max_cable_amps = String(evse.max_cable_amps, 0);
   str_max_evse_amps = String(evse.max_ac_amps, 1);
+  str_bal_cap = String(balanced_capacity, 1);
+  str_bal_p = String(balancing_power, 1);
   str_ptc_temp = String(ptc_temp, 1);
   str_ptc_temp_sp = String(WARMUP_TEMP, 1);
+
   if (heating_en)
   {
     str_heating_en = "true";
