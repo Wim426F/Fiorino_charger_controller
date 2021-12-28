@@ -36,10 +36,6 @@ extern struct evse_s evse;
 
 extern float charger_pwm;
 
-/* Charging states */
-extern bool endofcharge;
-extern bool bms_is_balancing;
-extern bool trickle_charge;
 
 /* Limits */
 extern const float CELLTEMP_MIN;

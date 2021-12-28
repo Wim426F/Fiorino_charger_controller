@@ -9,7 +9,7 @@ float charger_pwm = 0;
 float ac_amps = 0;
 
 float ramp_up_exp = 5;
-float ramp_down_exp = 3;
+float ramp_down_exp = 2;
 
 /* Limits */
 const float CELLTEMP_MIN = 0.0;
@@ -17,7 +17,7 @@ const float CELLTEMP_MIN_UPPER = 10.0;
 const float CELLTEMP_MAX = 45.0;
 
 const float VMIN_LIM = 3.000;
-const float VMAX_LIM_LOWER = 4.000;
+const float VMAX_LIM_LOWER = 4.050;
 const float VMAX_LIM_UPPER = 4.150;
 const float VTOT_LOW = VMIN_LIM * 72;
 const float VTOT_MAX = VMAX_LIM_UPPER * 72;
@@ -25,11 +25,6 @@ const float VTOT_MAX = VMAX_LIM_UPPER * 72;
 const float CHARGER_MAX_AC_AMPS = 14; // this is required for EVSE
 
 String csv_header = "Time;  Vmin;   Vmax;   Vtot;   Temp;  SOC;    LEM;    PWM\n";
-
-/* Charging states */
-bool endofcharge = false;
-bool bms_is_balancing = false;
-bool trickle_charge = false;
 
 volatile unsigned long pwm_pulse_length = 0;
 volatile unsigned long pwm_prev_time = 0;
@@ -142,7 +137,7 @@ void dataLogger(string parameter)
       str_vmin.replace(".", ",");
       str_vmax.replace(".", ",");
       str_vtot.replace(".", ",");
-      str_ctmp.replace(".", ",");
+      str_ctmp_front.replace(".", ",");
       str_soc.replace(".", ",");
       str_dc_amps.replace(".", ",");
       String str_time_minutes = String(time_minutes);
@@ -154,11 +149,11 @@ void dataLogger(string parameter)
       str_balanced_capacity.replace(".", ",");
 
       logfile = SD.open("/log/logfile_" + String(logfile_nr) + ".txt", FILE_APPEND);
-      logfile.print(str_time_minutes + ";     " + str_vmin + ";  " + str_vmax + ";  " + str_vtot + ";  " + str_ctmp + ";  " + str_soc + ";  " + str_dc_amps + ";  " + str_pwm);
+      logfile.print(str_time_minutes + ";     " + str_vmin + ";  " + str_vmax + ";  " + str_vtot + ";  " + str_ctmp_front + ";  " + str_soc + ";  " + str_dc_amps + ";  " + str_pwm);
       logfile.print("\n");
       logfile.flush();
 
-      if (bms_is_balancing == true)
+      if (bms_state == BALANCING)
       {
         static int i = 0;
         if (i == 0)
@@ -173,7 +168,7 @@ void dataLogger(string parameter)
       }
 
       logfile.print("\n");
-      //Serial.println(str_time_minutes + ";" + str_vmin + ";" + str_vmax + ";" + str_vtot + ";" + str_ctmp + ";" + str_soc + ";" + str_dc_amps + ";" + str_pwm + "\n");
+      //Serial.println(str_time_minutes + ";" + str_vmin + ";" + str_vmax + ";" + str_vtot + ";" + str_ctmp_front + ";" + str_soc + ";" + str_dc_amps + ";" + str_pwm + "\n");
     }
     else
     {
@@ -221,17 +216,17 @@ void ControlCharger(bool charger_on)
   }
 
   /* Temperature limits & throttling */
-  if (celltemp < CELLTEMP_MIN)
+  if (celltemp_front < CELLTEMP_MIN || celltemp_rear < CELLTEMP_MIN)
   {
     charger_pwm = 0;
   }
 
-  if (celltemp < CELLTEMP_MIN_UPPER && celltemp > CELLTEMP_MIN) // throttle charger when temperature is lower
+  if ((celltemp_front < CELLTEMP_MIN_UPPER || celltemp_rear < CELLTEMP_MIN_UPPER) && (celltemp_front > CELLTEMP_MIN || celltemp_rear > CELLTEMP_MIN)) // throttle charger when temperature is lower
   {
-    charger_pwm -= (CELLTEMP_MIN_UPPER - celltemp) * (charger_pwm / 20);
+    charger_pwm -= (CELLTEMP_MIN_UPPER - celltemp_front) * (charger_pwm / 20);
   }
 
-  if (celltemp > CELLTEMP_MAX)
+  if (celltemp_front > CELLTEMP_MAX || celltemp_rear > CELLTEMP_MAX)
   {
     charger_pwm = 0;
   }
@@ -239,7 +234,7 @@ void ControlCharger(bool charger_on)
   /* Charger speed limits */
   if (charger_pwm > 1)
   {
-    if (trickle_charge == true)
+    if (bms_state == TRICKLE_CHARGE)
     {
       charger_pwm = 130;
     }
@@ -256,7 +251,7 @@ void ControlCharger(bool charger_on)
     }
   }
 
-  if (charger_on == false || endofcharge == true)
+  if (charger_on == false || bms_state == ENDOFCHARGE)
   {
     charger_pwm = 0;
   }
@@ -342,7 +337,7 @@ void handleEvse()
       evse.is_waiting = false;
     }
 
-    if (trickle_charge == true) // go back to state A if charging is almost finished
+    if (bms_state == TRICKLE_CHARGE) // go back to state A if charging is almost finished
     {
       ledcWrite(greenled_ch, 255); // turn fully on
     }
@@ -383,9 +378,13 @@ void handleEvse()
   }
   else // cable is unplugged
   {
+    if (evse.is_plugged_in)
+    {
+      esp_restart();          // restart esp32 otherwise the current session states affect next session.
+    }
+    
     evse.is_plugged_in = false;
     evse.is_waiting = true; // resets evse starting sequence for next session
-    esp_restart();          // restart esp32 otherwise the current session states affect next session.
 
     ControlCharger(false); // turn off charger
     digitalWrite(S1_LED_GREEN, LOW);
