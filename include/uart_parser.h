@@ -3,15 +3,6 @@
 
 #include <string>
 
-enum BMS_REQ
-{
-    READY = 0,
-    WAITING = 1,
-    RECEIVED = 2,
-    TIMEOUT = 3,
-    PARSE_FAIL = 4,
-};
-
 /**
  * @brief	 Request data from BMS trough RS232
  * @param    ""     Check state
@@ -26,7 +17,8 @@ void GetSerialData(std::string input = "");
  */
 std::string ParseStringData(std::string input);
 
-extern int uart_state;
+extern int bms_req;
+extern int car_mode;
 extern std::string serial_string;
 extern int rx_timeouts;
 

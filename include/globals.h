@@ -16,6 +16,8 @@
 #include <elapsedMillis.h>
 #include <EEPROM.h>
 #include <CAN.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
 
 /* GPIO */
 //#define HARDWARE_VERSION_1 // uncomment to use pinout for old version
@@ -53,8 +55,9 @@
 #define EVSE_PILOT GPIO_NUM_35   // input
 #define EVSE_STATE_C GPIO_NUM_16  // output
 
+#define DS18B20_BUS GPIO_NUM_25
 #define CAN_TX GPIO_NUM_27
-#define CAN_RX GPIO_NUM_25
+//#define CAN_RX GPIO_NUM_25
 
 #define UART_RX1 GPIO_NUM_26
 #define UART_TX1 GPIO_NUM_22
@@ -70,8 +73,40 @@ extern File logfile;
 extern File serialfile;
 extern int logfile_nr;
 
+enum BMS_REQ
+{
+    READY = 0,
+    WAITING = 1,
+    RECEIVED = 2,
+    TIMEOUT = 3,
+    PARSE_FAIL = 4,
+};
+
+extern int bms_req;
+
+enum BMS_STATE
+{
+    NORMAL = 0,
+    BALANCING = 1,
+    TRICKLE_CHARGE = 2,
+    ENDOFCHARGE = 3,
+};
+
+extern int bms_state;
+
+enum CAR_MODE
+{
+    OFF = 0,
+    CHARGE = 1,
+    DRIVE = 2,
+    UNKNOWN = 3,
+};
+
+extern int car_mode;
+
 /* Variables */
-extern float celltemp;
+extern float celltemp_front;
+extern float celltemp_rear;
 extern float stateofcharge;
 extern float dc_amps;
 extern float vmin;
@@ -83,7 +118,8 @@ extern float balancing_power;
 extern String str_vmin;
 extern String str_vmax;
 extern String str_vtot;
-extern String str_ctmp;
+extern String str_ctmp_front;
+extern String str_ctmp_rear;
 extern String str_soc;
 extern String str_dc_amps;
 extern String str_max_evse_amps;
@@ -93,6 +129,7 @@ extern String str_bal_cap;
 extern String str_ptc_temp;
 extern String str_ptc_temp_sp;
 extern String str_heating_en;
+extern String str_pwm_ptc;
 
 extern uint8_t input_s1;
 

@@ -11,8 +11,6 @@ const int rx_timeout = 7000; // millis
 int request_intv = 3000;     // update values every 3000ms
 bool incoming = false;
 
-int uart_state = READY;
-
 unsigned long since_answer = 0;
 unsigned long since_request = 0;
 unsigned long since_byte1 = 0;
@@ -41,41 +39,52 @@ void GetSerialData(string input)
 {
   unsigned long time_millis = millis();
 
-  if (trickle_charge == true)
+  if (bms_state == TRICKLE_CHARGE)
   {
-    request_intv = 30000; // too frequent refreshing of data during trickle phase doesn't work
+    request_intv = 15000; // too frequent refreshing of data during trickle phase doesn't work
   }
 
-  if (time_millis - since_answer > request_intv && uart_state != WAITING) // set ready state after interval
+  if (time_millis - since_answer > request_intv && bms_req != WAITING) // set ready state after interval
   {
-    uart_state = READY;
+    bms_req = READY;
   }
 
-  if (uart_state == READY && input != "")
+  if (bms_req == READY && input != "")
   {
     while (Serial1.available() && Serial1.read())
       ; // empty buffer again
 
     Serial1.println(input.c_str());
     Serial.println(input.c_str());
-    uart_state = WAITING;
+    bms_req = WAITING;
     since_request = time_millis;
   }
   else // wait for incoming data
   {
-    if (time_millis - since_request > rx_timeout && uart_state == WAITING) // timeout
+    if (time_millis - since_request > rx_timeout && bms_req == WAITING) // timeout
     {
       Serial.println("No data received: timeout");
-      uart_state = TIMEOUT;
+      bms_req = TIMEOUT;
       since_answer = time_millis;
       rx_timeouts++;
+
+      if (rx_timeouts > 5) // if request times out, the car has probably shutdown
+      {
+        if (car_mode != OFF)
+        {
+          Serial.println("Car turned of");
+          dataLogger("car turned of");
+          car_mode = OFF;
+        }
+      }
 
       stateofcharge = 0;
       dc_amps = 0;
       vmin = 0;
       vmax = 0;
       vtot = 0;
-      celltemp = 0;
+      celltemp_front = 0;
+      celltemp_rear = 0;
     }
 
     if (Serial1.available() > 0)
@@ -99,25 +108,31 @@ void GetSerialData(string input)
         since_answer = time_millis;
 
         incoming = false;
-        uart_state = BMS_REQ::RECEIVED;
+        bms_req = BMS_REQ::RECEIVED;
 
         Serial.println("BMS data received!");
         //Serial.println(serial_string.c_str());
         WifiSerial();
 
         string return_state;
-        if (request_t)
+
+        if (request_t) // switch between t and d when bms is balancing
         {
           return_state = ParseStringData("t");
+          if (bms_state == BALANCING)
+          {
+            request_t = false;
+          }
         }
-        if (request_t == false)
+        else
         {
           return_state = ParseStringData("d");
+          request_t = true;
         }
 
         if (return_state == "fail") // if data is corrupt, the rs232 port is probably in use
         {
-          uart_state = BMS_REQ::PARSE_FAIL;
+          bms_req = BMS_REQ::PARSE_FAIL;
           Serial.println("Data corrupted");
         }
       }
@@ -139,18 +154,38 @@ string ParseStringData(std::string input)
     vmin = 0;
     vmax = 0;
     vtot = 0;
-    celltemp = 0;
+    celltemp_front = 0;
+    celltemp_rear = 0;
+
+    if (serial_string.find("Marcia") != -1) // Car is in drive mode
+    {
+      car_mode = DRIVE;
+    }
+    else // car is in charge mode
+    {
+      car_mode = CHARGE;
+    }
 
     if (serial_string.find("SOC") != -1)
     {
-      // Cell temperature
+      // Cell temperature front (bms 5)
       size_t celltemp_idx = serial_string.find("-7f") + 21;
       if (serial_string[celltemp_idx] == '-')
-        celltemp = stof(serial_string.substr(celltemp_idx, celltemp_idx + 4));
+        celltemp_front = stof(serial_string.substr(celltemp_idx, 4));
       if (serial_string[celltemp_idx] == '.')
-        celltemp = stof(serial_string.substr(celltemp_idx, celltemp_idx + 2));
+        celltemp_front = stof(serial_string.substr(celltemp_idx, 2));
       if (serial_string[celltemp_idx] != '-' || serial_string[celltemp_idx] != '.')
-        celltemp = stof(serial_string.substr(celltemp_idx, celltemp_idx + 4));
+        celltemp_front = stof(serial_string.substr(celltemp_idx, 4));
+
+      // Cell temperature rear (bms 2)
+      celltemp_idx = 0;
+      celltemp_idx = serial_string.find("-3f") + 21;
+      if (serial_string[celltemp_idx] == '-')
+        celltemp_rear = stof(serial_string.substr(celltemp_idx, 4));
+      if (serial_string[celltemp_idx] == '.')
+        celltemp_rear = stof(serial_string.substr(celltemp_idx, 2));
+      if (serial_string[celltemp_idx] != '-' || serial_string[celltemp_idx] != '.')
+        celltemp_rear = stof(serial_string.substr(celltemp_idx, 4));
 
       // Total voltage
       size_t vtot_idx = serial_string.find("Vtot") + 5;
@@ -201,28 +236,24 @@ string ParseStringData(std::string input)
 
     if (serial_string.find("Equilibratura") != -1)
     {
-      bms_is_balancing = true;
+      bms_state = BALANCING;
     }
 
     if (vmax >= VMAX_LIM_UPPER)
     {
-      trickle_charge = true;
+      bms_state = BMS_STATE::TRICKLE_CHARGE;
     }
 
     if (vmax >= VMAX_LIM_UPPER && stateofcharge >= 70.0 && vmin >= (VMAX_LIM_UPPER - 0.02))
     {
-      if (bms_is_balancing == false)
+      if (bms_state != BALANCING)
       {
-        endofcharge = true;
+        bms_state = ENDOFCHARGE;
       }
-      else if (bms_is_balancing == true && balancing_power > 0.1 && balancing_power < 1)
+      else if (bms_state == BALANCING && balancing_power > 0.1 && balancing_power < 1)
       {
-        endofcharge = true;
+        bms_state = ENDOFCHARGE;
       }
-    }
-    else if (stateofcharge < 70.0)
-    {
-      endofcharge = false;
     }
 
     Serial.print("vmin: ");
@@ -231,8 +262,10 @@ string ParseStringData(std::string input)
     Serial.println(vmax);
     Serial.print("vtot: ");
     Serial.println(vtot);
-    Serial.print("Temperature: ");
-    Serial.println(celltemp);
+    Serial.print("Temperature front: ");
+    Serial.println(celltemp_front);
+    Serial.print("Temperature rear: ");
+    Serial.println(celltemp_rear);
     Serial.print("State of Charge: ");
     Serial.println(stateofcharge);
     Serial.print("Current sensor: ");
@@ -246,8 +279,8 @@ string ParseStringData(std::string input)
 
     if (serial_string.find("dissipata") != -1)
     {
-      size_t balanced_capacity_idx = serial_string.find("dissipata") + 9;
-      balanced_capacity = stof(serial_string.substr(balanced_capacity_idx, balanced_capacity_idx + 6));
+      size_t balanced_capacity_idx = serial_string.find("dissipata") + 10;
+      balanced_capacity = stof(serial_string.substr(balanced_capacity_idx, 5));
       Serial.print("Balanced Capacity: ");
       Serial.println(balanced_capacity);
       output = "succes";
@@ -259,8 +292,8 @@ string ParseStringData(std::string input)
 
     if (serial_string.find("istantanea") != -1)
     {
-      size_t balancing_power_idx = serial_string.find("istantanea") + 10;
-      balancing_power = stof(serial_string.substr(balancing_power_idx, balancing_power_idx + 4));
+      size_t balancing_power_idx = serial_string.find("istantanea") + 11;
+      balancing_power = stof(serial_string.substr(balancing_power_idx, 5));
       Serial.print("Balancing Power: ");
       Serial.println(balancing_power);
     }
@@ -292,7 +325,4 @@ void WifiSerial()
     serialfile.println(serial_string.c_str());
     serialfile.close();
   }
-
-  
-  
 }
